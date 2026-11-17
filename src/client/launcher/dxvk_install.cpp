@@ -31,54 +31,69 @@ namespace launcher_dxvk
 			const auto text = path.u8string();
 			return {text.begin(), text.end()};
 		}
+
+		constexpr int retired_slots = 16;
+
+		std::filesystem::path retired_name(const std::filesystem::path& target, const int slot)
+		{
+			auto aside = target;
+			aside += L".mwrvr-old." + std::to_wstring(slot);
+			return aside;
+		}
+
+		// Delete copies an earlier launcher session renamed aside; ones still
+		// loaded by a running launcher stay until a later start.
+		void remove_retired(const std::filesystem::path& target)
+		{
+			for (int slot = 0; slot < retired_slots; ++slot)
+			{
+				std::error_code error;
+				std::filesystem::remove(retired_name(target, slot), error);
+			}
+		}
+
+		// overlord.exe imports d3d11/dxgi, so a launcher started while DXVK was
+		// installed has our copies loaded. Windows refuses to delete a loaded
+		// image but allows renaming it, which frees the name for the game.
+		bool retire(const std::filesystem::path& target)
+		{
+			std::error_code error;
+			if (std::filesystem::remove(target, error) && !error) return true;
+			for (int slot = 0; slot < retired_slots; ++slot)
+			{
+				const auto aside = retired_name(target, slot);
+				if (std::filesystem::exists(aside, error)) continue;
+				error.clear();
+				std::filesystem::rename(target, aside, error);
+				if (!error) return true;
+			}
+			return false;
+		}
 	}
 
 	void sync(const std::filesystem::path& game_directory, const bool enabled)
 	{
 		const auto bundle = game_directory / L"overlord-mwr" / L"dxvk";
 		std::error_code error;
-		// Check every file before copying any: a half-installed pair (DXVK
-		// d3d11 beside a foreign dxgi) would keep the game from starting.
-		if (enabled)
-			for (const auto* name : libraries)
-			{
-				const auto source = bundle / name;
-				const auto target = game_directory / name;
-				if (!std::filesystem::is_regular_file(source, error))
-					throw std::runtime_error("The Vulkan renderer (DXVK) files are missing: " + narrow(source) +
-						". Reinstall MWR VR or turn the Vulkan renderer off.");
-				if (std::filesystem::exists(target, error) && !same_content(source, target))
-					throw std::runtime_error("Another " + narrow(target.filename()) +
-						" (for example ReShade or a different DXVK) is in the game folder. Remove it or turn the "
-						"Vulkan renderer (DXVK) off.");
-			}
+		for (const auto* name : libraries) remove_retired(game_directory / name);
+		// The game loads DXVK from the bundle itself (component/dxvk_runtime.hpp).
+		// Copies earlier builds placed in the game folder made every module,
+		// including the OpenXR runtime, use DXVK: remove them whatever the option.
+		// Files that are not byte-identical to the bundle (ReShade, other wrappers)
+		// are never deleted.
 		for (const auto* name : libraries)
 		{
 			const auto source = bundle / name;
 			const auto target = game_directory / name;
-			const bool present = std::filesystem::exists(target, error);
-			if (!enabled)
-			{
-				// Remove only our own copy; another wrapper stays untouched.
-				if (present && std::filesystem::exists(source, error) && same_content(source, target))
-					if (!std::filesystem::remove(target, error) || error)
-						throw std::runtime_error("Could not remove " + narrow(target) +
-							" (Vulkan renderer turned off). Close the game and try again.");
-				continue;
-			}
-			if (present) continue; // identical, checked above
-			// Copy beside the target, then rename, so a failed copy never leaves a
-			// truncated d3d11/dxgi that would stop the game from starting.
-			auto partial = target;
-			partial += L".mwrvr-partial";
-			std::filesystem::copy_file(source, partial, std::filesystem::copy_options::overwrite_existing, error);
-			if (!error) std::filesystem::rename(partial, target, error);
-			if (error)
-			{
-				std::filesystem::remove(partial, error);
-				throw std::runtime_error("Could not install " + narrow(target) +
-					" for the Vulkan renderer (DXVK). Check folder permissions.");
-			}
+			if (std::filesystem::exists(target, error) && std::filesystem::exists(source, error) &&
+				same_content(source, target) && !retire(target))
+				throw std::runtime_error("Could not remove the old " + narrow(target) +
+					" (Vulkan renderer). Close the game and try again.");
 		}
+		if (enabled)
+			for (const auto* name : libraries)
+				if (!std::filesystem::is_regular_file(bundle / name, error))
+					throw std::runtime_error("The Vulkan renderer (DXVK) files are missing: " + narrow(bundle / name) +
+						". Reinstall MWR VR or turn the Vulkan renderer off.");
 	}
 }

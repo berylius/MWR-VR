@@ -5,17 +5,22 @@
 namespace vr::gameplay::weapons::physical_reload
 {
 	enum class attachment_kind { held_magazine, inserted_magazine, chamber_round, action_partition };
+	enum class attachment_pose_lifetime { sampled, retained_native_skeleton };
 
 	// Eligibility only. Placement still comes from the exact native skinned
 	// object/matrices/epoch; this never permits a previous or latest pose fallback.
+	// A caller proving native still retains that same skeleton may retain its
+	// replacement geometry too. Ownership/ammo/reference checks remain mandatory.
 	inline bool attachment_state_matches(attachment_kind kind,const presentation& frozen,
-		const presentation& live,clock::time_point captured_at,clock::time_point now) noexcept
+		const presentation& live,clock::time_point captured_at,clock::time_point now,
+		attachment_pose_lifetime lifetime=attachment_pose_lifetime::sampled) noexcept
 	{
 		if(!frozen.active || frozen.fault || !live.active || live.fault || !frozen.definition ||
 			frozen.definition!=live.definition || !same_render_carrier(frozen.owner,live.owner) ||
 			frozen.ammo.instance_generation!=live.ammo.instance_generation ||
 			frozen.reference_generation!=live.reference_generation ||
-			now<captured_at || now-captured_at>std::chrono::milliseconds(150))return false;
+			now<captured_at || (lifetime==attachment_pose_lifetime::sampled &&
+				now-captured_at>std::chrono::milliseconds(150)))return false;
 
 		// Support acquisition happens after this tick's reload update. A newly
 		// skinned receiver can therefore precede the reload view's support owner.

@@ -18,9 +18,13 @@
 #include "vr/gameplay/view_aimed_weapon.hpp"
 #include "vr/engine_stereo_renderer.hpp"
 #include "vr/head_pose_bridge.hpp"
+#include "vr/mounted_camera_transport.hpp"
+#include "vr/h2/entrypoints.hpp"
+#include "vr/gameplay/hands/native_rig.hpp"
 
 #include <utils/hook.hpp>
 #include <utils/concurrency.hpp>
+#include <utils/native_memory.hpp>
 
 namespace camera
 {
@@ -62,15 +66,47 @@ namespace camera
 		float camera_origin_override[3]{};
 		float camera_angles_override[3]{};
 
-		// Hand-aimed mounted gun (vr_turretHandAim): the eye held from the mount entry.
-		struct mounted_entry {std::uint64_t epoch{};std::array<float,3> eye{};};
-		mounted_entry mounted_view;
-		std::uint64_t mounted_epoch{};
+		vr::mounted_camera_transport::seat_anchor mounted_view;
+		struct mounted_diagnostic
+		{
+			bool active{},vehicle{};unsigned entity{};
+			std::array<float,3> carrier{},eye{};float yaw{};
+			std::uint64_t followed{},misses{};
+		} mounted_probe;
 		bool mounted_hand_aim()
 		{
 			if (!vr::gameplay::view_aimed::mounted() || vr::gameplay::view_aimed::active() || vr::gameplay::barrett_gun::epoch()) return false;
 			const auto* aim = game::Dvar_FindVar("vr_turretHandAim");
 			return aim && aim->current.enabled;
+		}
+		bool rendered_carrier(unsigned entity,vr::pose_filter::pose& carrier,
+			vr::game_view::scripted_rotation_reference& rotation,std::uintptr_t& identity,bool require_vehicle_model=false)
+		{
+			if(!entity || entity>=3998)return false;
+			std::uint16_t handle{};
+			// MWR client cposes: CG_CalcTurretView 0x140185D60 uses this array,
+			// 0x200 stride and +0x1B2 DObj handle. Pose origin/angles are +1C/+28.
+			const auto* pose=reinterpret_cast<const std::byte*>(0x14215D500ull+std::uintptr_t(entity)*0x200);
+			std::array<float,6> transform{};
+			if(!utils::native_memory::read_bytes(&handle,pose+0x1b2,2) || !handle || handle>=4032 ||
+				!utils::native_memory::read_bytes(transform.data(),pose+0x1c,sizeof(transform)))return false;
+			const auto* object=vr::h2::sp::client_entity_dobj(handle,0);
+			if(!object)return false;
+			if(require_vehicle_model)
+			{
+				vr::gameplay::hands::native_object description{};
+				game::XModel* model{};const char* name{};std::array<char,8> prefix{};
+				if(!utils::native_memory::read_bytes(&description,object,sizeof(description)) || !description.model_count ||
+					!description.models || !utils::native_memory::read_bytes(&model,description.models,sizeof(model)) || !model ||
+					!utils::native_memory::read_bytes(&name,&model->name,sizeof(name)) || !name ||
+					!utils::native_memory::read_bytes(prefix.data(),name,8) || std::string_view(prefix.data(),8)!="vehicle_")return false;
+			}
+			for(float x:transform)if(!std::isfinite(x) || std::abs(x)>100000.f)return false;
+			std::array<std::array<float,3>,3> axis{};
+			game::AnglesToAxis(transform.data()+3,reinterpret_cast<float(*)[3]>(axis.data()));
+			carrier={{transform[0],transform[1],transform[2]},vr::pose_filter::transpose(axis)};
+			if(!vr::pose_filter::valid(carrier))return false;
+			identity=reinterpret_cast<std::uintptr_t>(object);rotation.axis=axis;return true;
 		}
 
 		void paused_free_move()
@@ -217,6 +253,20 @@ namespace camera
 			// Story rigs that throw the body around (rope descents, crashes): the
 			// authored eye with no room-scale offset, centring the player.
 			vr::game_view::camera_request request{};
+			vr::game_view::scripted_rotation_reference carrier_rotation{};
+			// Charlie Don't Surf rides a linked UH-60 with an ordinary weapon;
+			// it never enters the Mk19's weaponless vehicle-turret state.
+			int linked=vr::gameplay::scripted_motion::linked_parent();
+			vr::pose_filter::pose linked_pose;std::uintptr_t linked_identity{};
+			bool linked_vehicle{};
+			// H1 armada: player -> worldbody_h1_usmc_desert -> Black Hawk.
+			// Do not mistake that intermediate animated body for the carrier.
+			for(unsigned depth=0;depth<8 && linked>0 && linked!=vr::gameplay::ladders::owned_carrier();++depth)
+			{
+				if(rendered_carrier(unsigned(linked),linked_pose,carrier_rotation,linked_identity,true))
+				{linked_vehicle=true;break;}
+				linked=vr::gameplay::scripted_motion::linked_parent(linked);
+			}
 			const bool gunship = vr::gameplay::view_aimed::gunship();
 			static bool was_gunship{};
 			static std::uint64_t gunship_epoch{};
@@ -250,15 +300,52 @@ namespace camera
 			// airlift Mk19): the hands set the native angles, and the native eye sits
 			// on the gun's aim chain (tag_player), so the whole view rotated and bobbed
 			// with every hand movement on top of the player's own turn (user report).
-			// Hold the entry heading and eye as for the Barrett; only the head moves.
-			else if (mounted_hand_aim())
+			// Keep the seat in the rendered carrier frame. A player-relative offset
+			// followed translation but left the view heading behind on helicopter turns.
+			else if (mounted_hand_aim() || linked_vehicle)
 			{
-				if (!mounted_view.epoch) mounted_view = {++mounted_epoch, {game::refdef->org[0], game::refdef->org[1], game::refdef->org[2]}};
-				std::copy(mounted_view.eye.begin(), mounted_view.eye.end(), game::refdef->org);
+				const bool hand_aim=mounted_hand_aim();
+				const bool vehicle=linked_vehicle || (ps && (ps->e_flags&0x100000));
+				vr::pose_filter::pose carrier;
+				std::uintptr_t identity{};
+				std::uint16_t entity{};
+				if(ps)std::memcpy(&entity,reinterpret_cast<const std::byte*>(ps)+0x1e,2);
+				if(linked_vehicle){entity=static_cast<std::uint16_t>(linked);carrier=linked_pose;identity=linked_identity;}
+				const bool carrier_ready=linked_vehicle || rendered_carrier(entity,carrier,carrier_rotation,identity);
+				if(!vehicle)
+				{
+					// Heat's native player origin orbits the minigun as it aims.
+					// Anchor to the rendered turret base instead of that moving body.
+					carrier=vr::mounted_camera_transport::translation_frame(carrier);
+					carrier_rotation={};
+				}
+				const std::array<float,3> native_eye{game::refdef->org[0],game::refdef->org[1],game::refdef->org[2]};
+				std::array<float,3> eye{};
+				// Boarding as a passenger and taking the gun may share one DObj,
+				// but their authored eye anchors are different seats.
+				if(carrier_ready && mounted_view.update(std::uint64_t(entity)|(vehicle?1ull<<32:0)|(hand_aim?1ull<<33:0),identity,
+					ps->commandTime,carrier,native_eye,eye))
+				{
+					if(hand_aim)std::copy(eye.begin(),eye.end(),game::refdef->org);
+					if(vehicle)carrier_rotation.source=mounted_view.revision();
+					++mounted_probe.followed;
+				}
+				else {mounted_view.reset();++mounted_probe.misses;} // Missing carrier: use the current native eye.
+				mounted_probe.active=true;mounted_probe.vehicle=vehicle;mounted_probe.entity=entity;
+				mounted_probe.carrier=carrier.position;mounted_probe.eye={game::refdef->org[0],game::refdef->org[1],game::refdef->org[2]};
+				mounted_probe.yaw=vehicle?std::atan2(carrier_rotation.axis[0][1],carrier_rotation.axis[0][0])*57.295779513f:0.f;
 				request = {{vr::game_view::camera_owner::script, vr::game_view::head_rotation::free,
-					vr::game_view::head_translation::tracked}, mounted_view.epoch | (1ull << 58)};
+					vr::game_view::head_translation::tracked}, mounted_view.revision() | (1ull << 58)};
+				// Seat the current physical head at the authored eye once on gun
+				// entry. Keep subsequent head motion 1:1 in the shared hand frame.
+				if(hand_aim && carrier_ready)request.position_epoch=request.epoch;
+				if(carrier_rotation.source)
+				{
+					request.policy.script=vr::game_view::script_rotation::additive;
+					request.policy.source=vr::game_view::rotation_source::tag;
+				}
 			}
-			if (!mounted_hand_aim()) mounted_view = {};
+			if (!mounted_hand_aim() && !linked_vehicle) {mounted_view.reset();mounted_probe.active=false;}
 			// Real crouch/prone already lowers the tracked head: cancel the native
 			// eye-height drop up to that much so the view is not lowered twice.
 			if (ps && request.policy == vr::game_view::camera_profiles::gameplay && !request.epoch)
@@ -267,7 +354,7 @@ namespace camera
 				game::refdef->org[2] += vr::gameplay::physical_stance::eye_compensation_units(ps->viewHeightCurrent, head.world_scale);
 			}
 			if (ps && vr::head_pose_bridge::apply_camera(game::refdef->org, game::refdef->axis,
-				ps->commandTime, game::cgs->refdefViewAngles, request))
+				ps->commandTime, game::cgs->refdefViewAngles, request,carrier_rotation.source?&carrier_rotation:nullptr))
 			{
 				camera_origin[0] = game::refdef->org[0];
 				camera_origin[1] = game::refdef->org[1];
@@ -411,6 +498,18 @@ namespace camera
 
 			utils::hook::call(calc_view_values_call_site, set_viewpos_now_stub);
 			sub_140781090_hook.create(camera_lod_helper, sub_140781090_stub);
+			command::add("vr_mounted_camera_status",[] {
+				console::info("[VR mounted camera] active=%d vehicle=%d entity=%u revision=%llu followed=%llu misses=%llu carrier=(%.1f,%.1f,%.1f) yaw=%.2f eye=(%.1f,%.1f,%.1f)\n",
+					mounted_probe.active,mounted_probe.vehicle,mounted_probe.entity,mounted_view.revision(),
+					mounted_probe.followed,mounted_probe.misses,mounted_probe.carrier[0],mounted_probe.carrier[1],mounted_probe.carrier[2],
+					mounted_probe.yaw,mounted_probe.eye[0],mounted_probe.eye[1],mounted_probe.eye[2]);
+				vr::head_pose_bridge::spatial_frame frame;
+				if(vr::head_pose_bridge::get_spatial_frame(frame))
+					console::info("[VR mounted head] eye=(%.3f,%.3f,%.3f) yaw=%.3f pitch=%.3f\n",
+						frame.head_position[0],frame.head_position[1],frame.head_position[2],
+						std::atan2(frame.head_yaw_axis[0][1],frame.head_yaw_axis[0][0])*57.295779513f,
+						vr::head_pose_bridge::get_status().output_pitch_degrees);
+			});
 		}
 	};
 }

@@ -1,8 +1,11 @@
 #include <std_include.hpp>
 #include "native_weapon_fx.hpp"
+#include "native_weapon_fx_notetrack.hpp"
+#include "native_weapon_read.hpp"
 #include "native_fx_world_space.hpp"
 #include "native_fx_checkpoint.hpp"
 #include "tube_profile.hpp"
+#include "tube_runtime.hpp"
 #include "component/fastfiles.hpp"
 #include "component/scheduler.hpp"
 #include "game/game.hpp"
@@ -105,8 +108,16 @@ namespace vr::gameplay::weapons::native_weapon_fx
 			(!extraction && !valid(event.muzzle))) return;
 		auto* flash=extraction ? nullptr : utils::hook::invoke<game::FxEffectDef*>(flash_query,token,false);
 		game::FxEffectDef* brass{};
-		const auto* def=game::weapon_defs[token];
-		if (event.has_brass && valid(event.brass) && def && (extraction ? def->boltAction : !def->boltAction))
+		const auto weapon=native_weapon_read::get(token);
+		const auto* def=weapon.definition;
+		const auto tube_state = tube::current(event.owner.id());
+		const bool manual_tube = tube_state.active && !tube_state.fault && tube_state.definition && def &&
+			tube_state.definition->matches_native(weapon.name.data(), def->clipSize) &&
+			tube::manual(tube_state.definition->ammunition);
+		// H1's W1200 is a manual pump with boltAction=false. The committed
+		// mechanical extraction, rather than that rifle-only flag, owns its case.
+		if (event.has_brass && valid(event.brass) && def &&
+			(extraction || (!def->boltAction && !manual_tube)))
 		{
 			if (!checkpoint_ready)
 			{
@@ -122,6 +133,15 @@ namespace vr::gameplay::weapons::native_weapon_fx
 			}
 		}
 		const int time=game::CG_GetGameTime(0);
+		if(!brass && extraction && event.has_brass && valid(event.brass) && def && event.tube_definition &&
+			event.tube_definition->matches_native(weapon.name.data(),def->clipSize))
+			brass=native_fx::notetrack_effect(def,event.tube_definition->case_eject_notetrack,
+				event.tube_definition->case_eject_from_origin?"tag_origin":"tag_brass",
+				[](game::scr_string_t id,std::string_view expected)
+				{
+					const auto* value=game::SL_ConvertToString(id);
+					return value && std::string_view(value,strnlen_s(value,128))==expected;
+				});
 		if (flash) emit(flash,time,event.muzzle);
 		if (brass) emit(brass,time,event.brass);
 		// Counters mean calls admitted to the native bounded queue, not a claim

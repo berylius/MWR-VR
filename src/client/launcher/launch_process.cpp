@@ -107,8 +107,9 @@ namespace launcher_process
 		command += L" -singleplayer -launcher-start";
 		command += unlock_campaign ? L" -campaign-unlock 1" : L" -campaign-unlock 0";
 		if (command.size() >= 32767) throw std::runtime_error("The startup command is too long.");
-		// d3d11/dxgi resolve from the game folder at process start, so the
-		// Vulkan renderer choice is applied here, before the game exists.
+		// Remove DXVK copies older builds put in the game folder (they would
+		// replace the OpenXR runtime's D3D11 too) and check the bundle the game
+		// loads itself when the Vulkan renderer is on.
 		const auto values = launcher_vr_settings::read_values(launcher_vr_settings::read_profile());
 		launcher_dxvk::sync(std::filesystem::current_path(), values.at(vr::settings::dxvk.name).get<bool>());
 		STARTUPINFOW startup{};

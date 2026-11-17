@@ -25,7 +25,7 @@ namespace vr::controller_input
 		std::mutex mutex;
 		frame current{};
 		input_history history;
-		std::uint64_t continuity{1};bool gameplay_active{};
+		std::uint64_t continuity{1},retention{1};bool gameplay_active{};
 		controller_calibration::calibration calibration;
 		std::array<pose_filter::filter,2> hand_filters;
 		frame unfiltered{};
@@ -37,8 +37,9 @@ namespace vr::controller_input
 	{
 		const std::lock_guard lock(mutex);
 		const auto settings=controller_calibration::read_settings(value.pose_pipeline);
-		auto next = calibration.apply(value,settings.orientation,settings.position);
+		auto next = calibration.apply_hands(value,settings.effective_angles(),settings.position);
 		const bool discontinuity=producer_discontinuity(unfiltered,next);
+		if(producer_retention_discontinuity(unfiltered,next))++retention;
 		if(discontinuity){++continuity;stabilization::invalidate();}
 		unfiltered=next;
 		const auto epoch=stabilization::epoch.load();
@@ -79,13 +80,13 @@ namespace vr::controller_input
 				next.source.channels[index(hand_channel(input_channel::left_aim,h))].reason!=input_reason::pose_filter_rejected)
 				next.source.channels[index(hand_channel(input_channel::left_aim,h))]={input_reason::calibration_invalid};
 		handedness::controls(next);
-		next.continuity_generation=continuity;history.observe(next);current=next;
+		next.continuity_generation=continuity;next.retention_generation=retention;history.observe(next);current=next;
 	}
 	void set_gameplay_active(bool active) noexcept
 	{
 		const std::lock_guard lock(mutex);
 		history.set_gameplay_active(active);
-		if(active!=gameplay_active){gameplay_active=active;current.continuity_generation=++continuity;for(auto& f:hand_filters)f.reset();}
+		if(active!=gameplay_active){gameplay_active=active;current.continuity_generation=++continuity;current.retention_generation=++retention;for(auto& f:hand_filters)f.reset();}
 		stabilization::set_gameplay(active);
 	}
 

@@ -262,7 +262,13 @@
       "vr_controllerPoseMode",
       "standard"
     ],
-    "row": "settings.angleOffsets"
+    "row": "settings.angleOffsets",
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        false
+      ]
+    ]
   },
   {
     "name": "vr_handAnglePitch",
@@ -288,7 +294,13 @@
       "vr_controllerPoseMode",
       "standard"
     ],
-    "row": "settings.angleOffsets"
+    "row": "settings.angleOffsets",
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        false
+      ]
+    ]
   },
   {
     "name": "vr_handAngleYaw",
@@ -314,7 +326,13 @@
       "vr_controllerPoseMode",
       "standard"
     ],
-    "row": "settings.angleOffsets"
+    "row": "settings.angleOffsets",
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        false
+      ]
+    ]
   },
   {
     "name": "vr_handAngleRoll",
@@ -328,6 +346,267 @@
       "legacy"
     ],
     "row": "settings.angleOffsets"
+  },
+  {
+    "name": "vr_standardHandAnglesIndependent",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.independentHandAngles",
+    "description": "settings.independentHandAnglesHint",
+    "type": "toggle",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ]
+  },
+  {
+    "name": "vr_standardLeftHandAnglePitch",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.pitch",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_leftHandAnglePitch",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.pitch",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_standardLeftHandAngleYaw",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.yaw",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_leftHandAngleYaw",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.yaw",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_standardLeftHandAngleRoll",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.roll",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_leftHandAngleRoll",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.roll",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.leftHandAngles",
+    "calibrationHand": "left"
+  },
+  {
+    "name": "vr_standardRightHandAnglePitch",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.pitch",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_rightHandAnglePitch",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.pitch",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_standardRightHandAngleYaw",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.yaw",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_rightHandAngleYaw",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.yaw",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_standardRightHandAngleRoll",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.roll",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "standard"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_standardHandAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_rightHandAngleRoll",
+    "category": "calibration",
+    "group": "settings.alignment",
+    "label": "settings.roll",
+    "type": "number",
+    "unit": "unit.degrees",
+    "visibleWhen": [
+      "vr_controllerPoseMode",
+      "legacy"
+    ],
+    "visibleWhenAll": [
+      [
+        "vr_handAnglesIndependent",
+        true
+      ]
+    ],
+    "row": "settings.rightHandAngles",
+    "calibrationHand": "right"
+  },
+  {
+    "name": "vr_firstPersonScale",
+    "category": "calibration",
+    "group": "settings.firstPersonSize",
+    "label": "settings.firstPersonSize",
+    "type": "number",
+    "unit": "unit.percent",
+    "description": "settings.firstPersonSizeHint"
   },
   {
     "name": "vr_adsComfort",
@@ -406,6 +685,30 @@
     "label": "settings.quickReloadEnabled",
     "type": "toggle",
     "description": "settings.quickReloadHint"
+  },
+  {
+    "name": "vr_autoReload",
+    "category": "gameplay",
+    "group": "settings.weaponInteraction",
+    "label": "settings.autoReload",
+    "type": "toggle",
+    "description": "settings.autoReloadHint"
+  },
+  {
+    "name": "vr_weaponGripMode",
+    "category": "gameplay",
+    "group": "settings.weaponInteraction",
+    "label": "settings.weaponGripMode",
+    "type": "choice",
+    "description": "settings.weaponGripModeHint"
+  },
+  {
+    "name": "vr_originalAKMagazine",
+    "category": "gameplay",
+    "group": "settings.weaponInteraction",
+    "label": "settings.originalAKMagazine",
+    "type": "toggle",
+    "description": "settings.originalAKMagazineHint"
   },
   {
     "name": "vr_chamberingGuide",
@@ -611,5 +914,13 @@
     "label": "settings.debugCover",
     "type": "toggle",
     "description": "settings.debugCoverHint"
+  },
+  {
+    "name": "vr_tracerStyle",
+    "category": "personalization",
+    "group": "settings.tracerCustomization",
+    "label": "settings.tracerStyle",
+    "type": "choice",
+    "description": "settings.tracerStyleHint"
   }
 ]

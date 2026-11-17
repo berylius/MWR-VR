@@ -220,18 +220,20 @@ namespace
 		loader.queue_session_state(XR_SESSION_STATE_READY);
 		runtime.on_present(graphics, 1);
 		const auto status = runtime.get_status();
-		vr::tests::require(status.state == vr::runtime_state::recoverable_error,
-			std::format("wait timeout did not become recoverable_error (actual={})",
-				vr::to_string(status.state)));
-		vr::tests::require(status.last_xr_result == XR_TIMEOUT_EXPIRED &&
-			status.last_xr_result_name == "XR_TIMEOUT_EXPIRED",
-			"frame cleanup or xrEndFrame overwrote the wait timeout XrResult");
-		vr::tests::require(status.last_error.find("xrWaitSwapchainImage") != std::string::npos,
-			"wait timeout error did not retain the failing operation");
+		vr::tests::require(status.state == vr::runtime_state::running && status.cleanup_count == 0 &&
+			status.swapchain_wait_deferrals == 1 && status.submitted_frames == 0,
+			"temporary wait timeout rebuilt the session or submitted a partial stereo pair");
 		const auto statistics = loader.statistics();
-		vr::tests::require(statistics.images_acquired == 1 && statistics.images_waited == 1 &&
-			statistics.images_released == 1,
-			"wait timeout did not leave the acquired image eligible for a later legal wait/release");
+		vr::tests::require(statistics.images_acquired == 1 && statistics.images_waited == 0 &&
+			statistics.images_released == 0, "timeout retains image until a later successful wait");
+		runtime.on_present(graphics, 2);
+		const auto resumed = runtime.get_status();
+		vr::tests::require(resumed.state == vr::runtime_state::running && resumed.cleanup_count == 0 &&
+			resumed.submitted_frames == 1, "next complete stereo pair resumes without session rebuild");
+		const auto recovered = loader.statistics();
+		vr::tests::require(recovered.images_acquired == 2 && recovered.images_waited == 2 &&
+			recovered.images_released == 2 && recovered.sessions_created == 1,
+			"retry must wait the retained image, then acquire only the opposite eye");
 		runtime.shutdown();
 	}
 

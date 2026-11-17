@@ -2,9 +2,11 @@
 #include "vr_settings.hpp"
 #include "vr_settings_config.hpp"
 #include "component/vr/handedness.hpp"
+#include "component/vr/first_person_size.hpp"
 #include "risk_settings_config.hpp"
 #include "build_config.hpp"
 #include "component/game_data.hpp"
+#include "component/dxvk_runtime.hpp"
 #include <utils/io.hpp>
 #include <fstream>
 
@@ -41,13 +43,15 @@ namespace launcher_vr_settings
 
 		std::string response(const json& values, const bool has_vr_config = true)
 		{
+			const bool standard=values.at(vr::settings::controller_pose_mode.name)=="standard";
+			const bool independent=values.at(vr::settings::hand_angles_independent[standard?0:1].name).get<bool>();
 			json limits = json::object();
 			for (const auto& field : vr::settings::numbers)
 				limits[field.name] = {{"min", setting_number(field.min)}, {"max", setting_number(field.max)},
 					{"step", setting_number(field.step)}, {"displayScale", setting_number(field.display_scale)}};
 			return json{{"ok", true}, {"values", values}, {"defaults", defaults()}, {"limits", limits},
 				{"onboarding", {{"gameAvailable", game_data::is_game_directory_available()}, {"hasVRConfig", has_vr_config}}},
-				{"controllerPresets",controller_presets(values.at(vr::settings::controller_pose_mode.name) == "standard") },
+				{"controllerPresets",controller_presets(standard,independent)},
 				{"choices",choice_catalog()},
 				{"build", {{"configuration", build_config::name}, {"optimized", build_config::optimized}}}}.dump();
 		}
@@ -86,7 +90,12 @@ namespace launcher_vr_settings
 			values.at(vr::settings::controller_pose_mode.name) == "legacy"
 				? vr::controller_pose_pipeline::mode::legacy : vr::controller_pose_pipeline::mode::standard);
 		vr::debug_options::initialize(debug_selection(values));
+		// MWR may prepare stored native rigs before the first world Present.
+		// Freeze the saved startup size before those packets can exist.
+		vr::first_person_size::requested.store(values.at(vr::settings::first_person_scale.name).get<float>());
+		(void)vr::first_person_size::freeze();
 		vr::handedness::initialize(values.at(vr::settings::control_hand.name)=="left",values.at(vr::settings::pistol_holster_side.name)=="left");
+		dxvk_runtime::select(values.at(vr::settings::dxvk.name).get<bool>());
 	}
 
 	std::string save(const std::string& payload)

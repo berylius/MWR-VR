@@ -13,6 +13,7 @@ namespace vr::gameplay::hand_interaction
 		std::array<hands::anchor,2> wrists{};
 		std::array<weapons::carry::scene,15> objects{};
 		unsigned valid_hands{};
+		unsigned blocked_acquisitions{};
 		weapons::carry::holsters holsters{};
 		const weapons::carry::scene* find(weapons::weapon_identity id)const noexcept
 		{for(const auto& s:objects)if(s.owner.id()==id && s.assembly)return &s;return nullptr;}

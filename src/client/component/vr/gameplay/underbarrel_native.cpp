@@ -7,6 +7,7 @@
 #include "native_ammunition.hpp"
 #include "native_ammunition_storage.hpp"
 #include "native_ballistics.hpp"
+#include "native_tracer.hpp"
 #include "native_scripted_control.hpp"
 #include "weapon_carry_runtime.hpp"
 #include <utils/native_memory.hpp>
@@ -138,7 +139,10 @@ namespace vr::gameplay::weapons::underbarrel::native
 			!commit(expected,after))return false;
 		settle(context);firing=true;const auto release=gsl::finally([]{firing=false;});
 		if(expected.module.id.type==kind::shotgun)
+		{
+			tracers::owner_scope tracer_owner{{packet.weapon,expected.module.id.host.generation},expected.module.id.host};
 			utils::hook::invoke<void>(native_ballistics::bullet_address,entity,spread,&packet,entity,command,-1.f);
+		}
 		else utils::hook::invoke<game::gentity_s*>(0x1402F3B10,entity,packet.weapon,&packet); // MWR (H2 0x14051CD40)
 		return true; // Never refund after entering native damage/scripts.
 	}

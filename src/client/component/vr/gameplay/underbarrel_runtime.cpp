@@ -6,6 +6,7 @@
 #include "carry_interaction.hpp"
 #include "official_cheats.hpp"
 #include "underbarrel_feedback.hpp"
+#include "underbarrel_presenter.hpp"
 #include "native_ammunition.hpp"
 #include "native_scripted_control.hpp"
 #include "native_carry.hpp"
@@ -57,6 +58,7 @@ namespace vr::gameplay::weapons::underbarrel
 			int last_fire{};
 			const char* decision{"waiting for fresh input"};
 			std::array<float, 4> contact{};
+			float action_distance{};
 			std::array<float, 2> load{10, 0}; // Held round: distance to the loading point (m), alignment.
 			std::uint64_t same_hand_chords{};
 			std::uint64_t native_reductions{};
@@ -110,20 +112,37 @@ namespace vr::gameplay::weapons::underbarrel
 				r.view.ammo=tx.next;
 			}
 			++commits;
-			r.decision=op==operation::draw?"secondary round drawn":op==operation::insert?"secondary round inserted":
-				op==operation::shot?"secondary shot emitted":op==operation::open?"action opened":op==operation::close?"action closed":"held round released";
+			r.decision = op == operation::draw           ? "secondary round drawn"
+			             : op == operation::insert       ? "secondary round inserted"
+			             : op == operation::shot         ? "secondary shot emitted"
+			             : op == operation::open         ? "action opened"
+			             : op == operation::close        ? "action closed"
+			             : op == operation::extract_case ? "unsupported case released"
+			                                             : "held round released";
 			if(s && (op==operation::open || op==operation::close || op==operation::insert))
 			{
 				feedback::event event{op==operation::insert?mechanics::effect::magazine_in:op==operation::open?mechanics::effect::action_rear:mechanics::effect::action_close,
 					r.view.owner,s->input.reference_generation,clock::now(),s->muzzle.position};event.secondary_definition=r.module.id.definition;
 				event.explicit_sound=interaction_sound(r.module.id.type,op);feedback::publish(event);
 			}
-			if(s && op!=operation::cleanup)feedback::carry_confirmation(off,s->input);
+			if (s && ejects_spent_case(tx))
+			{
+				publish(r); // Retire the chamber copy before publishing the released case.
+				round_presentation::eject({r.view.owner.id(),
+				                           s->input.reference_generation,
+				                           clock::now(),
+				                           s->ejection_world,
+				                           s->units,
+				                           s->digital});
+			}
+			if (s && op != operation::cleanup && op != operation::extract_case)
+				feedback::carry_confirmation(off, s->input);
 			return true;
 		}
 		bool interrupt(record& r)noexcept
 		{
 			r.view.grip=lease::none;r.view.motion={};r.sequence=0;r.insertion_armed=false;
+			r.view.maintained = hand_interaction::button::grip;
 			const bool ok=!r.view.ammo.held || apply(r,operation::cleanup);publish(r);return ok;
 		}
 		bool prepare_transfer_ammunition(record& module) noexcept
@@ -276,11 +295,12 @@ namespace vr::gameplay::weapons::underbarrel
 				return;
 			}
 			runtime.sequence = contact.input.sequence;
+			runtime.action_distance = contact.action_distance;
 			auto pinch = contact.input.trigger[off];
 			const auto& squeeze = contact.input.squeeze[off];
 			if (hand_interaction::input(hand(off), hand_interaction::button::trigger).release)
 				pinch.down = false;
-			if (hand_interaction::input(hand(off), hand_interaction::button::grip).release)
+			if (hand_interaction::input(hand(off), runtime.view.maintained).release)
 				runtime.view.grip = lease::none;
 			const bool trigger_pressed =
 			               hand_interaction::input(hand(off), hand_interaction::button::trigger).press,
@@ -297,6 +317,9 @@ namespace vr::gameplay::weapons::underbarrel
 			const bool hand_available =
 			    hand_interaction::permits(hand(off), hand_interaction::domain::underbarrel, held.id());
 			const bool grip_down = squeeze.active && squeeze.down;
+			const auto& action_input = grasp_input(runtime.view, input, off);
+			const bool action_down = action_input.active && action_input.down &&
+			                         action_input.generation == runtime.acquired_grip.generation;
 			const auto orientation = palm_facing{contact.support_facing, contact.facing};
 			const auto support_tolerance = support_limits(contact.type, contact.support_release);
 			const bool firing_contact =
@@ -373,13 +396,24 @@ namespace vr::gameplay::weapons::underbarrel
 					                                                    support_tolerance.step);
 					projected = {shared.valid, shared.travel};
 				}
-				if (!grip_down || !hand_available || !projected.valid)
+				if (!action_down || !hand_available || !projected.valid)
 					runtime.view.grip = lease::none;
 				else
 				{
 					runtime.previous = contact.stroke_hand;
 					runtime.previous_distance = contact.hand_distance;
 					const auto next = projected.travel;
+					if (case_unsupported(runtime.view.ammo,
+					                     next,
+					                     contact.units,
+					                     round_presentation::case_clearance_units(contact.digital)) &&
+					    !apply(runtime, operation::extract_case, &contact))
+					{
+						runtime.view.grip = lease::none;
+						++rejected;
+						publish(runtime);
+						return;
+					}
 					if (next >= contact.stroke * action_open_fraction && !runtime.view.ammo.open)
 					{
 						if (!apply(runtime, operation::open, &contact))
@@ -400,7 +434,9 @@ namespace vr::gameplay::weapons::underbarrel
 						else
 						{
 							runtime.view.travel = 0;
-							runtime.view.grip = runtime.view.support_role = lease::support;
+							runtime.view.grip = runtime.view.support_role =
+							    runtime.view.maintained == hand_interaction::button::trigger ? lease::none
+							                                                                 : lease::support;
 							rebase_stroke(runtime, contact);
 						}
 					}
@@ -467,7 +503,34 @@ namespace vr::gameplay::weapons::underbarrel
 					runtime.view.owns_support = true;
 				}
 				if (runtime.view.grip != lease::none)
+				{
 					runtime.acquired_grip = squeeze;
+					runtime.view.maintained = hand_interaction::button::grip;
+					runtime.view.motion.grip_generation = squeeze.generation;
+				}
+			}
+			if (trigger_pressed && pinch.active && pinch.down && runtime.view.grip == lease::none &&
+			    hand_interaction::granted(hand(off),
+			                              hand_interaction::domain::underbarrel,
+			                              held.id(),
+			                              hand_interaction::button::trigger,
+			                              hand_interaction::role::part) &&
+			    trigger_action_available(runtime.view.ammo,
+			                             runtime.view.travel,
+			                             contact.firing_distance,
+			                             contact.action_distance,
+			                             orientation,
+			                             contact.support_radius))
+			{
+				runtime.view.grip = runtime.view.support_role = lease::action;
+				runtime.view.maintained = hand_interaction::button::trigger;
+				runtime.acquired_grip = pinch;
+				runtime.view.motion.grip_generation = pinch.generation;
+				runtime.view.owns_support = false;
+				runtime.decision = "tube pinch acquired";
+				rebase_stroke(runtime, contact);
+				publish(runtime);
+				return; // This Trigger edge cannot also fire or draw ammunition.
 			}
 			if (grip_pressed && runtime.view.grip != lease::none)
 				runtime.decision =
@@ -484,8 +547,11 @@ namespace vr::gameplay::weapons::underbarrel
 			                           contact.waist_distance <= contact.waist_radius &&
 			                               (held.support == hand::none ||
 			                                (runtime.view.owns_support && runtime.view.grip == lease::none)),
-			                           hand_interaction::granted(hand(off),hand_interaction::domain::underbarrel,held.id(),
-			                                                     hand_interaction::button::trigger),
+			                           hand_interaction::granted(hand(off),
+			                                                     hand_interaction::domain::underbarrel,
+			                                                     held.id(),
+			                                                     hand_interaction::button::trigger,
+			                                                     hand_interaction::role::supply),
 			                           true);
 			if (trigger == trigger_route::fire || trigger == trigger_route::secondary_supply)
 			{
@@ -501,7 +567,8 @@ namespace vr::gameplay::weapons::underbarrel
 				         hand_interaction::granted(hand(off),
 				                                   hand_interaction::domain::underbarrel,
 				                                   held.id(),
-				                                   hand_interaction::button::trigger))
+				                                   hand_interaction::button::trigger,
+				                                   hand_interaction::role::supply))
 				{
 					runtime.insertion_armed = false;
 					if (!apply(runtime, operation::draw, &contact))
@@ -586,6 +653,26 @@ namespace vr::gameplay::weapons::underbarrel
 				const auto picked=choose_grip(ammo,view.travel,s.firing_distance,s.action_distance,{s.support_facing,s.facing},s.support_radius);
 				if(picked!=lease::none)hi::offer({actor,{hi::object(hi::domain::underbarrel,s.owner.id(),0,s.assembly),picked==lease::firing?hi::role::firing:hi::role::foregrip,hi::button::grip,hi::recipe::single,grip_capabilities(s.type,picked)},grip.event,15,picked==lease::firing?s.firing_distance/firing_acquire:s.action_distance/s.support_radius,1,true,true});
 			}
+			if (pinch.press && pinch.down && !ammo.held && live->owner.support == hand::none &&
+			    !(grip.press && grip.down) &&
+			    trigger_action_available(ammo,
+			                             view.travel,
+			                             s.firing_distance,
+			                             s.action_distance,
+			                             {s.support_facing, s.facing},
+			                             s.support_radius))
+				hi::offer({actor,
+				           {hi::object(hi::domain::underbarrel, s.owner.id(), 0, s.assembly),
+				            hi::role::part,
+				            hi::button::trigger,
+				            hi::recipe::single,
+				            hi::capability::action},
+				           pinch.event,
+				           15,
+				           s.action_distance / s.support_radius,
+				           1,
+				           true,
+				           true});
 			if(pinch.press && pinch.down && s.waist_distance<=s.waist_radius)
 			{
 				const bool preferred=smart && !view.fault && prefer_secondary_supply(ammo,view.travel,s.stroke,physical_reload::primary_supply_needed(s.owner.id()));
@@ -616,11 +703,15 @@ namespace vr::gameplay::weapons::underbarrel
 			const auto actor = module_grip_hand(module);
 			if (module.grip == lease::none || !valid_hand(actor))
 				continue;
-			const auto role = module.grip == lease::firing ? hi::role::firing : hi::role::foregrip;
-			const auto abilities = carry::held(entry.id).can_fire()
-			                           ? grip_capabilities(module.ammo.id.type, module.grip)
-			                           : hi::capability::aim;
-			hi::observed(actor, {target, role, hi::button::grip, hi::recipe::single, abilities});
+			const bool pinched = module.maintained == hi::button::trigger;
+			const auto role = pinched                        ? hi::role::part
+			                  : module.grip == lease::firing ? hi::role::firing
+			                                                 : hi::role::foregrip;
+			const auto abilities =
+			    carry::held(entry.id).can_fire()
+			        ? pinched ? hi::capability::action : grip_capabilities(module.ammo.id.type, module.grip)
+			        : hi::capability::aim;
+			hi::observed(actor, {target, role, module.maintained, hi::recipe::single, abilities});
 		}
 	}
 	presentation current(weapon_identity id)noexcept
@@ -798,7 +889,7 @@ namespace vr::gameplay::weapons::underbarrel
 				motion.sequence = input.sequence;
 				motion.assembly = s.assembly;
 				motion.sampled_at = input.sampled_at;
-				motion.grip_generation = input.squeeze[s.contact_hand].generation;
+				motion.grip_generation = grasp_input(r->view, input, s.contact_hand).generation;
 				motion.units = body.units_per_meter;
 				motion.span = relative_hand_span(wrists, int(s.owner.rear), body.units_per_meter);
 				motion.hand = s.stroke_hand;
@@ -866,7 +957,7 @@ namespace vr::gameplay::weapons::underbarrel
 	                                  hands::part_hand_frame* hand_motion) noexcept
 	{
 		using namespace hands;if(!enabled() || !parts || !owner.can_fire() || !library.valid || units<=0 || !std::isfinite(units) || solved.size()<size_t(rig.count))return {};
-		const int rear=int(owner.rear),off=1-rear;const auto gun=as_anchor(solved[rig.gun]);
+		const int rear=int(owner.rear),off=1-rear;const auto gun=as_anchor(solved[rig.gun], rig.model_scale);
 		auto fire=firing_anchor(parts,rig,library,ordinary_supports[off],off);
 		auto rack=parts.type==kind::shotgun ? compose(parts.mount,authored::pump_grip) : ordinary_supports[off];
 		auto round=parts.type==kind::m203 ? authored::m203_round_in_wrist : parts.type==kind::gp25 ? authored::gp25_round_in_wrist : authored::shotgun_round_in_wrist;
@@ -878,14 +969,25 @@ namespace vr::gameplay::weapons::underbarrel
 		const auto axis=rotate(parts.mount.rotation,parts.type==kind::shotgun ? authored::shotgun_axis : authored::m203_axis);
 		const auto action_rest=rack;const auto movement=scale(axis,v.travel*units);rack.position=add(rack.position,movement);
 		const auto load=parts.type==kind::gp25 ? parts.muzzle : parts.round_rest;
-		scene s;s.input=input;s.owner=owner;s.type=parts.type;s.assembly=assembly;s.gameplay=gameplay;
+		scene s;
+		s.input = input;
+		s.owner = owner;
+		s.type = parts.type;
+		s.digital = parts.digital;
+		s.assembly = assembly;
+		s.gameplay = gameplay;
 		s.axis=axis;s.contact_hand=off;s.wrist_basis=free_hand_rotation(profile,off);
 		s.firing_forward_m=parts.firing_forward_m;
 		s.rear_local=profile.wrists[rear].position;s.support_radius=profile.acquire_meters;s.support_release=profile.release_meters;
 		s.firing_local=fire;s.action_local=action_rest;s.round_in_wrist=round;s.loading_local=load;s.muzzle_local=parts.muzzle;
+		// The case stays at the breech while the tube slides forward. Use the
+		// admitted attachment's shell bone, not the host rifle's brass marker.
+		if (parts.type == kind::m203)
+			s.ejection_local = compose(parts.round_rest, parts.round_parts_local[1]);
 		s.stroke=parts.type==kind::shotgun ? authored::shotgun_stroke : authored::m203_stroke;s.units=units;
 		if(profile.reload){s.waist_radius=profile.reload->interaction.waist_radius;s.supply=profile.reload->supply;}
 		s=sample_contact(s,input,owner,gun,targets[off],head,axes,units,v.travel);s.muzzle.position=add(s.muzzle.position,offset);
+		s.ejection_world.position = add(s.ejection_world.position, offset);
 		if(!finite_contact(s))s.gameplay=false;
 		{const std::lock_guard lock(publication);scenes.retain([](weapon_identity id){return carry::contains(id);});if(auto* p=scenes.acquire(owner.id()))*p=s;}
 		if(!finite_contact(s))return {};
@@ -903,7 +1005,7 @@ namespace vr::gameplay::weapons::underbarrel
 		(void)pose_action(parts,rig,gun,v.travel,units,solved);
 		if(pose_owned && v.active && v.ammo.held && v.ammo.loader==hand(off))
 		{
-			const auto held_round=compose(as_anchor(solved[rig.arms[off].wrist]),round);
+			const auto held_round=compose(as_anchor(solved[rig.arms[off].wrist], rig.model_scale),round);
 			move_part(rig,parts.round,held_round,solved);
 			for(int n=0;n<2;++n)if(parts.round_parts[n]>=0)move_part(rig,parts.round_parts[n],compose(held_round,parts.round_parts_local[n]),solved);
 			const auto fingers=parts.type==kind::shotgun?std::span<const joint_pose>(authored::shell_fingers):parts.type==kind::gp25?std::span<const joint_pose>(authored::gp25_fingers):std::span<const joint_pose>(authored::grenade_fingers);
@@ -931,7 +1033,8 @@ namespace vr::gameplay::weapons::underbarrel
 		for(const auto& e:records.entries())if(e.id){const auto& r=e.value;const auto& v=r.view;out<<"host="<<e.id.weapon<<" generation="<<e.id.generation<<" module="<<v.ammo.id.definition<<" kind="<<int(v.ammo.id.type)
 			<<" loaded="<<v.ammo.loaded<<" reserve="<<v.ammo.reserve<<" held="<<v.ammo.held<<" chamber="<<v.ammo.chamber<<" open="<<v.ammo.open<<" spent="<<v.ammo.spent<<" travel="<<v.travel<<" grip="<<int(v.grip)<<" fault="<<v.fault
 			<<" input="<<r.sequence<<" same_hand_chords="<<r.same_hand_chords<<" native_reductions="<<r.native_reductions<<" last_native="<<r.last_native_before<<"->"<<r.last_native_after
-			<<" decision="<<r.decision<<" fire_distance/up/inward/waist="<<r.contact[0]<<'/'<<r.contact[1]<<'/'<<r.contact[2]<<'/'<<r.contact[3]<<" load_distance/alignment="<<r.load[0]<<'/'<<r.load[1]<<'\n';}
+				<<" decision="<<r.decision<<" fire_distance/up/inward/waist="<<r.contact[0]<<'/'<<r.contact[1]<<'/'<<r.contact[2]<<'/'<<r.contact[3]<<" action_distance="<<r.action_distance<<" load_distance/alignment="<<r.load[0]<<'/'<<r.load[1]<<'\n';}
+		out<<round_presentation::status();
 		return out.str();
 	}
 	std::string report_status()

@@ -28,6 +28,18 @@ template<class Check>void hud_prompt_tests(Check& check)
 	const auto boarding = compose(key::snowmobile_board, zh);
 	check(boarding && text(*boarding) == game_text::utf8(u8"雪地摩托停稳后，靠近即可自动上车"),
 		"snowmobile boarding explains the story stop and proximity without a hand or button argument");
+	{
+		const context ship{true,"cargoship",feature::carry},house{true,"killhouse",feature::carry};
+		check(resolve(source::script_hud,"CARGOSHIP_HINT_CROUCH_TOGGLE",ship)==key::trainer_crouch &&
+			resolve(source::script_hud,"PLATFORM_HINT_HOLD_CROUCH_COVER",ship)==key::trainer_crouch &&
+			resolve(source::script_hud,"CARGOSHIP_HINT_STAND_STANCE",ship)==key::trainer_stand &&
+			resolve(source::script_hud,"CARGOSHIP_HINT_FRAG",ship)==key::trainer_frag &&
+			resolve(source::script_hud,"CARGOSHIP_MANTLE",ship)==key::trainer_jump,
+			"cargoship crouch/stand/frag/jump keyhints use the VR instructions");
+		check(!resolve(source::script_hud,"CARGOSHIP_HINT_FRAG",house) &&
+			resolve(source::script_hud,"PLATFORM_HINT_HOLD_CROUCH",house)==key::trainer_crouch,
+			"cargoship rules stay scoped to cargoship; killhouse rules unchanged");
+	}
 	const context estate{true,"estate"},favela{true,"favela"},flare{true,"dc_whitehouse",feature::signal_flare};
 	for(const auto* name:{"ESTATE_LEARN_PRONE","ESTATE_LEARN_PRONE_TOGGLE","ESTATE_LEARN_PRONE_HOLDDOWN"})
 	{

@@ -166,6 +166,13 @@ namespace vr::gameplay::weapons::feedback
 		controller_haptics::request(static_cast<int>(actor),{.022f,110.f,.14f*gain,input.reference_generation,input.sampled_at});
 		++pulses;
 	}
+	void carry_readiness(hand actor,const controller_input::frame& input) noexcept
+	{
+		const auto gain=published_haptic_gain.load();
+		if (!alive || !valid_hand(actor) || gain<=0 || !input.focused) return;
+		controller_haptics::request(static_cast<int>(actor),{.012f,110.f,.08f*gain,input.reference_generation,input.sampled_at});
+		++pulses;
+	}
 	void melee_confirmation(const hold& owner,const controller_input::frame& input,const std::array<float,3>& position) noexcept
 	{
 		event value;value.owner=owner;value.reference=input.reference_generation;value.at=input.sampled_at;

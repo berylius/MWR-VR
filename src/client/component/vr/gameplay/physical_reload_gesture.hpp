@@ -176,6 +176,20 @@ namespace vr::gameplay::weapons::physical_reload
 		{
 			return belt_.busy() || slide_held_ || magazine_seated_ || magazine_grabbed_ || s.magazine_hand != hand::none;
 		}
+		bool suspend_magazine(const mechanics::state& s,const controller_input::frame& input,
+			const hold& owner,clock::time_point now) noexcept
+		{
+			if(!valid_hand(rear_) || owner.holding_hand()!=rear_ || owner.rear_revision!=rear_revision_ ||
+				s.weapon!=weapon_ || s.instance_generation!=instance_ || input.reference_generation!=reference_ ||
+				!retention_ || input.retention_generation!=retention_ || input.sequence<sequence_ || now<last_time_ ||
+				!input.focused || input.orientation_settling || s.magazine_hand!=hand(1-int(rear_)) ||
+				!s.held_rounds || slide_held_ || s.action==mechanics::action_state::held_open)return false;
+			const auto off=1-int(rear_);
+			if(!input.grip[off].valid || !input.aim[off].valid || !input.trigger[off].active || !input.trigger[off].down)return false;
+			pose_suspended_=true;
+			decision_="held magazine retained while pose publication delayed";
+			return true;
+		}
 
 		// Call against the OLD instance before switching/reassigning rear hand.
 		// Losing tracking closes a held stroke but never undoes a live extraction.
@@ -246,11 +260,35 @@ namespace vr::gameplay::weapons::physical_reload
 				}
 				return;
 			}
-			const bool changed = continuity_.update(input,now) || s.weapon != weapon_ || s.instance_generation != instance_ ||
+			if(pose_suspended_ && input.sequence==sequence_)return;
+			const bool changed = continuity_.update(input,now) || pose_suspended_ || s.weapon != weapon_ || s.instance_generation != instance_ ||
 				owner.holding_hand() != rear_ || owner.rear_revision != rear_revision_ ||
 				input.reference_generation != reference_ || input.sequence < sequence_;
 			if(s.weapon!=weapon_ || s.instance_generation!=instance_ || now<last_time_)insert_after_={};
-			if (changed && !interrupt(rules, s, owner.holding_hand(), commit)) return;
+			if (changed)
+			{
+				// A render/input stall invalidates motion and button edges, not the
+				// payload already in a continuously tracked, still pinching hand.
+				if(input.retention_generation && input.retention_generation==retention_ &&
+					s.weapon==weapon_ && s.instance_generation==instance_ && owner.holding_hand()==rear_ &&
+					owner.rear_revision==rear_revision_ && input.reference_generation==reference_ &&
+					input.sequence>sequence_ && now>=last_time_ && s.magazine_hand==hand(off) &&
+					!slide_held_ && s.action!=mechanics::action_state::held_open && manipulation &&
+					input.grip[off].valid && input.aim[off].valid && trigger.active && trigger.down &&
+					g.knife_held==knife_magazine_grasp_)
+				{
+					const auto pose=magazine_pose_;const bool knife=knife_magazine_grasp_;
+					reset_gesture();magazine_pose_=pose;knife_magazine_grasp_=knife;
+					resume_input(g,input,owner,now);
+					(void)release_.consume(release);(void)fire_.consume(input.trigger[rear]);
+					previous_hand_=g.hand_in_gun;previous_tip_=g.magazine_top_in_well;
+					require_withdrawal_=true;examined_=g;
+					decision_="held magazine retained; motion rebased after input gap";
+					return; // No catch, insertion, shot or release can replay across the gap.
+				}
+				decision_ = "input continuity or owner changed";
+				if (!interrupt(rules, s, owner.holding_hand(), commit)) return;
+			}
 			if (input.sequence == sequence_) return; // both eyes / same frame cannot repeat an operation
 			const bool offhand_available = manipulation && input.grip[off].valid && input.aim[off].valid && trigger.active;
 			// Losing the other hand cancels only its part lease. Rear-hand buttons
@@ -259,13 +297,17 @@ namespace vr::gameplay::weapons::physical_reload
 				trigger.generation!=trigger_.generation || trigger.presses<trigger_.presses)
 			{
 				const auto release_gate = release_, fire_gate = fire_;
+				decision_ = !manipulation ? "offhand manipulation denied" :
+					!input.grip[off].valid || !input.aim[off].valid ? "offhand tracking lost" :
+					!trigger.active ? "offhand trigger inactive" :
+					trigger.generation!=trigger_.generation || trigger.presses<trigger_.presses ? "offhand digital generation changed" : "knife ownership changed";
 				const bool cleaned = interrupt(rules, s, owner.holding_hand(), commit);
 				release_ = release_gate; fire_ = fire_gate;
 				if (!cleaned) return;
 			}
 			weapon_ = s.weapon; instance_ = s.instance_generation;
 			rear_ = owner.holding_hand(); rear_revision_ = owner.rear_revision;
-			reference_ = input.reference_generation; sequence_ = input.sequence; last_time_ = now;
+			reference_ = input.reference_generation; retention_=input.retention_generation; sequence_ = input.sequence; last_time_ = now;
 			examined_ = g; // only a newly consumed input, never a duplicate render sample
 			const bool local_press=trigger_.consume(trigger);
 			const bool pressed=access.pinch.value_or(local_press);
@@ -694,12 +736,13 @@ namespace vr::gameplay::weapons::physical_reload
 		void resume_input(const geometry& g,const controller_input::frame& input,const hold& owner,clock::time_point now)noexcept
 		{
 			weapon_=owner.weapon;instance_=g.instance_generation;rear_=owner.holding_hand();rear_revision_=owner.rear_revision;
-			reference_=input.reference_generation;sequence_=input.sequence;last_time_=now;(void)continuity_.update(input,now);
+			reference_=input.reference_generation;retention_=input.retention_generation;sequence_=input.sequence;last_time_=now;(void)continuity_.update(input,now);
 			trigger_={};(void)trigger_.consume(input.trigger[1-int(rear_)]);
 		}
 		void reset_gesture() noexcept
 		{
 			belt_.reset();bolt_release_={};
+			pose_suspended_=false;
 			knife_magazine_grasp_=false;
 			magazine_pose_=0;
 			knife_slide_grasp_=false;
@@ -713,11 +756,12 @@ namespace vr::gameplay::weapons::physical_reload
 		}
 		controller_input::digital_press_gate trigger_{}, release_{}, fire_{};
 		std::uint32_t weapon_{};
-		std::uint64_t instance_{}, reference_{}, sequence_{}, rear_revision_{};
+		std::uint64_t instance_{}, reference_{}, retention_{}, sequence_{}, rear_revision_{};
 		hand rear_{hand::none};
 		clock::time_point last_time_{},insert_after_{};
 		controller_input::consumer_continuity continuity_;
 		bool slide_held_{}, forward_armed_{}, magazine_seated_{}, magazine_grabbed_{}, require_withdrawal_{}, well_contact_{};
+		bool pose_suspended_{};
 		bool rock_armed_{}; // Rock-in: hooked while tilted at least arm_degrees.
 		bool rock_engaged_{}; // Rock-in: hooked on the last sample (wider hold band).
 		float rock_start_tilt_{}; // Rock-out: magazine tilt when the seated magazine was taken.

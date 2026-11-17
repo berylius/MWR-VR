@@ -5,8 +5,12 @@
 #if H2V_OPENXR_HEADERS_AVAILABLE
 #include "component/d3d11.hpp"
 
+#include <array>
 #include <atomic>
 #include <format>
+#include <psapi.h>
+#include <string>
+#include <string_view>
 
 namespace vr::openxr::vulkan
 {
@@ -45,6 +49,89 @@ namespace vr::openxr::vulkan
 			IDXGIVkInteropDevice1* interop_;
 		};
 
+		// DXVK creates a Vulkan 1.3 device and uses core entry points, so the
+		// promoted KHR extensions (VK_KHR_get_memory_requirements2, ...) are not
+		// enabled: vkGetDeviceProcAddr returns null for their KHR aliases, and the
+		// loader's instance-level trampoline for the alias jumps through that
+		// empty device slot. Virtual Desktop's VDXR resolves
+		// vkGetImageMemoryRequirements2KHR through its vulkan-1 import and called
+		// address 0 in xrEnumerateSwapchainImages. A promoted alias has the core
+		// command's signature, so hand out the core entry whenever one exists.
+		PFN_vkGetInstanceProcAddr loader_get_instance_proc{};
+		PFN_vkGetDeviceProcAddr loader_get_device_proc{};
+		PFN_vkVoidFunction VKAPI_CALL get_device_proc(VkDevice device, const char* name)
+		{
+			if (name && device)
+			{
+				const std::string_view requested(name);
+				if (requested.size() > 5 && requested.ends_with("KHR"))
+				{
+					const std::string core(requested.substr(0, requested.size() - 3));
+					if (const auto function = loader_get_device_proc(device, core.c_str())) return function;
+				}
+			}
+			return loader_get_device_proc(device, name);
+		}
+		PFN_vkVoidFunction VKAPI_CALL get_instance_proc(VkInstance instance, const char* name)
+		{
+			if (name && instance && std::string_view(name) == "vkGetDeviceProcAddr")
+			{
+				if (!loader_get_device_proc)
+					loader_get_device_proc = reinterpret_cast<PFN_vkGetDeviceProcAddr>(loader_get_instance_proc(instance, name));
+				if (loader_get_device_proc) return reinterpret_cast<PFN_vkVoidFunction>(&get_device_proc);
+			}
+			if (name && instance)
+			{
+				const std::string_view requested(name);
+				if (requested.size() > 5 && requested.ends_with("KHR"))
+				{
+					const std::string core(requested.substr(0, requested.size() - 3));
+					if (const auto function = loader_get_instance_proc(instance, core.c_str())) return function;
+				}
+			}
+			return loader_get_instance_proc(instance, name);
+		}
+
+		// Repoint vkGetInstanceProcAddr imports of the in-process OpenXR runtime
+		// and layers. Only the loader's own export is replaced, so modules that
+		// resolve Vulkan some other way (DXVK) are unaffected.
+		void bind_runtime_vulkan_imports() noexcept
+		{
+			const auto vulkan_module = GetModuleHandleW(L"vulkan-1.dll");
+			if (!vulkan_module) return;
+			loader_get_instance_proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+			    GetProcAddress(vulkan_module, "vkGetInstanceProcAddr"));
+			if (!loader_get_instance_proc) return;
+			std::array<HMODULE, 1024> modules{};
+			DWORD needed{};
+			if (!K32EnumProcessModules(GetCurrentProcess(), modules.data(), DWORD(sizeof(modules)), &needed)) return;
+			const auto count = (std::min)(std::size_t(needed / sizeof(HMODULE)), modules.size());
+			for (std::size_t m = 0; m < count; ++m)
+			{
+				const auto module = modules[m];
+				if (!module || module == vulkan_module) continue;
+				const auto base = reinterpret_cast<std::uint8_t*>(module);
+				const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+				if (dos->e_magic != IMAGE_DOS_SIGNATURE) continue;
+				const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+				const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+				if (!directory.VirtualAddress) continue;
+				for (auto* entry = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + directory.VirtualAddress);
+				     entry->Name; ++entry)
+				{
+					if (_stricmp(reinterpret_cast<const char*>(base + entry->Name), "vulkan-1.dll") != 0) continue;
+					for (auto* slot = reinterpret_cast<IMAGE_THUNK_DATA*>(base + entry->FirstThunk); slot->u1.Function; ++slot)
+					{
+						if (slot->u1.Function != reinterpret_cast<ULONG_PTR>(loader_get_instance_proc)) continue;
+						DWORD protect{};
+						if (!VirtualProtect(&slot->u1.Function, sizeof(slot->u1.Function), PAGE_READWRITE, &protect)) continue;
+						slot->u1.Function = reinterpret_cast<ULONG_PTR>(&get_instance_proc);
+						VirtualProtect(&slot->u1.Function, sizeof(slot->u1.Function), protect, &protect);
+					}
+				}
+			}
+		}
+
 		XrResult XRAPI_CALL create_swapchain(XrSession session, const XrSwapchainCreateInfo* info, XrSwapchain* out)
 		{ queue_lock lock(false); return original_create_swapchain(session, info, out); }
 		XrResult XRAPI_CALL destroy_swapchain(XrSwapchain swapchain)
@@ -55,8 +142,10 @@ namespace vr::openxr::vulkan
 		{ queue_lock lock(true); return original_release(swapchain, info); }
 		XrResult XRAPI_CALL begin_frame(XrSession session, const XrFrameBeginInfo* info)
 		{ queue_lock lock(false); return original_begin_frame(session, info); }
+		// Every eye image was drained to the queue by its release. A second CS
+		// drain here only stalls the render thread on DXVK's worker.
 		XrResult XRAPI_CALL end_frame(XrSession session, const XrFrameEndInfo* info)
-		{ queue_lock lock(true); return original_end_frame(session, info); }
+		{ queue_lock lock(false); return original_end_frame(session, info); }
 
 		struct format_pair { std::int64_t dxgi, vk; };
 		constexpr format_pair formats[]{
@@ -81,6 +170,7 @@ namespace vr::openxr::vulkan
 	void activate(const binding& value, dispatch_table& dispatch) noexcept
 	{
 		current = value.interop;
+		bind_runtime_vulkan_imports();
 		original_create_swapchain = dispatch.create_swapchain;
 		original_destroy_swapchain = dispatch.destroy_swapchain;
 		original_acquire = dispatch.acquire_swapchain_image;

@@ -3,8 +3,6 @@
 
 #include "filesystem.hpp"
 #include "console.hpp"
-#include "mods.hpp"
-#include "language.hpp"
 
 #include "game/game.hpp"
 
@@ -38,7 +36,7 @@ namespace filesystem
 			const auto mod_path = utils::flags::get_flag("mod");
 			if (mod_path.has_value())
 			{
-				mods::set_mod(mod_path.value());
+				throw std::runtime_error("The H2 mod-loader is unavailable in the MWR host. Install MWR LUI scripts under overlord-mwr/ui_scripts.");
 			}
 
 			utils::hook::invoke<void>(0x14040D890, name);

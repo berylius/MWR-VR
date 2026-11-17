@@ -16,15 +16,19 @@ namespace launcher_vr_settings
 	inline constexpr std::size_t max_config_bytes = 4 * 1024 * 1024;
 	inline constexpr std::size_t max_payload_bytes = 4096;
 	inline double setting_number(float value) noexcept {return std::round(double(value)*1000000)/1000000;}
-	inline json controller_presets(bool standard = false)
+	inline json controller_presets(bool standard = false, bool independent = false)
 	{
 		auto result=json::array();
 		const auto& fields = standard ? vr::settings::standard_hand_alignment : vr::settings::hand_alignment;
+		const auto& hands = standard ? vr::settings::standard_independent_hand_angles : vr::settings::independent_hand_angles;
 		for (const auto& preset:vr::settings::alignment_presets)
 		{
 			json values=json::object();
-			for (std::size_t i=0;i<vr::settings::hand_alignment.size();++i)
+			for (std::size_t i=0;i<(independent?3:fields.size());++i)
 				values[fields[i].name]=setting_number(preset.values[i]);
+			if (independent)
+				for (const auto& hand:hands)
+					for (std::size_t i=0;i<hand.size();++i) values[hand[i].name]=setting_number(preset.values[i+3]);
 			result.push_back({{"id",preset.id},{"label",preset.label},{"values",values}});
 		}
 		return result;
@@ -163,7 +167,7 @@ namespace launcher_vr_settings
 		for(const auto& field:vr::settings::toggles)
 			if(native_name(parts[1], field.name))return field.name;
 		for (const auto& field : vr::settings::numbers)
-			if (same_name(field.name, parts[1])) return field.name;
+			if (native_name(parts[1], field.name)) return field.name;
 		return {};
 	}
 
@@ -177,6 +181,8 @@ namespace launcher_vr_settings
 			// Include advanced VR dvars, not just fields exposed by this launcher.
 			if (parts.size() == 3 && (same_name(parts[0], "set") || same_name(parts[0], "seta")) &&
 				parts[1].size() > 3 && same_name(std::string_view(parts[1]).substr(0, 3), "vr_")) return true;
+			const auto name = setting_name(parts);
+			if (name.size() > 3 && same_name(std::string_view(name).substr(0, 3), "vr_")) return true;
 			if (end == std::string_view::npos) break;
 			config.remove_prefix(end + 1);
 		}

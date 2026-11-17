@@ -5,6 +5,7 @@
 #include "native_scripted_control.hpp"
 #include "break_action_runtime.hpp"
 #include "quick_reload_runtime.hpp"
+#include "physical_reload_runtime.hpp"
 #include "break_action_presenter.hpp"
 #include "native_shot_history.hpp"
 #include "weapon_carry_runtime.hpp"
@@ -44,7 +45,7 @@ namespace vr::gameplay::weapons::break_action
 		const char* reason{"waiting for break_action presentation contract"};
 		instance* find(weapon_identity id) noexcept
 		{ for (auto& i : inventory) if (i.view.active && i.view.owner.id() == id) return &i; return nullptr; }
-		bool active() noexcept { return alive.load() && boundaries.load()==7 && enabled && enabled->current.enabled; }
+		bool active() noexcept { return alive.load() && boundaries.load()==7 && enabled && enabled->current.enabled && !physical_reload::native_reload(); }
 		bool commit(instance& i,const transaction& tx,bool direct_load=false)
 		{
 			if(!native_ammunition::compare_commit_owned(server_ps,i.view.owner.id(),tx.before,tx.after))

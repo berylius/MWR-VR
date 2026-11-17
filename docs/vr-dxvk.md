@@ -6,11 +6,20 @@ runs on Vulkan through DXVK 3.1.1 (bundled, `overlord-mwr/dxvk/`, zlib license).
 ## Turning it on
 
 Launcher > Basics > VR backend > **Vulkan renderer (DXVK)** (`vr_dxvk`, off by
-default). When the game is started from the launcher, `launcher/dxvk_install.cpp`
-copies the bundled `d3d11.dll`/`dxgi.dll` into the game folder; with the option
-off it removes them again. Only byte-identical copies are replaced or removed;
-a foreign `d3d11.dll`/`dxgi.dll` (ReShade, another DXVK) stops the launch with a
-message instead. Direct `-singleplayer` starts keep whatever files are present.
+default). The game reads the option at startup and loads the bundled DXVK by
+full path (`component/dxvk_runtime.hpp`), only for its own `CreateDXGIFactory` /
+`D3D11CreateDevice` imports (`component/d3d11.cpp`). The process-wide
+`d3d11.dll`/`dxgi.dll` stay the system ones, so in-process OpenXR runtimes that
+make their own D3D11 device for Vulkan interop keep real D3D11. Virtual
+Desktop's VDXR does (shared `ID3D11Fence` imported as a Vulkan semaphore);
+with DXVK as the game folder's `d3d11.dll` that fence failed and
+`xrCreateSession` returned `XR_ERROR_RUNTIME_FAILURE`.
+
+DXVK's `d3d11.dll` imports `CreateDXGIFactory1` by the name `dxgi.dll`, which
+binds to the system DXGI; `dxvk_runtime` repoints that import to DXVK's DXGI.
+The launcher (`launcher/dxvk_install.cpp`) removes DXVK copies older builds
+placed in the game folder (only byte-identical ones) and checks the bundle when
+the option is on. `OVERLORD_MWR_DXVK=0/1` overrides the setting for tests.
 
 The first start after switching shows the game's "hardware changed" settings
 prompt, because DXVK reports its own adapter identity.

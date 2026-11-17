@@ -31,6 +31,7 @@ import { LaunchDialog } from "./components/LaunchDialog";
 import { StartupNotice } from "./components/StartupNotice";
 import type { PreflightReport, LaunchResult } from "./preflight";
 import { useSettings, type Notice } from "./useSettings";
+import { angleModePatch, calibrationBank } from "./calibration";
 import { useGameLanguages } from "./useGameLanguages";
 import { initialHelpState } from "./helpState";
 import {
@@ -284,6 +285,12 @@ function Launcher({ data }: { data: Bootstrap }) {
     }
   }
   function change(key: string, value: string | boolean, numeric: boolean) {
+    if (key === calibrationBank(controller.draft).independent) {
+      if (poseModePending || controller.pending) return;
+      try { void controller.update(angleModePatch(controller.draft, controller.state, value === true)); }
+      catch (error) { controller.report(error); }
+      return;
+    }
     const previous = controller.draft[key];
     setNotice(null);
     const revision = controller.edit(key, value);
@@ -295,21 +302,14 @@ function Launcher({ data }: { data: Bootstrap }) {
   }
   const poseModePending = controller.draft.vr_controllerPoseMode !== controller.state.values.vr_controllerPoseMode;
   function selectPreset(id: string) {
-    if (poseModePending) return;
+    if (poseModePending || controller.pending) return;
     const preset = controller.state.controllerPresets.find(
       (preset) => preset.id === id,
     );
     if (!preset) return;
-    const values = makeDraft(preset.values, controller.state.limits);
-    const previous = { ...controller.draft };
-    const revisions: Record<string, number> = {};
-    for (const [key, value] of Object.entries(values))
-      revisions[key] = controller.edit(key, value);
-    void controller.save(Object.keys(values)).then((success) => {
-      if (!success)
-        for (const [key, value] of Object.entries(values))
-          controller.revert(key, value, previous[key], revisions[key]);
-    });
+    const bank = calibrationBank(controller.draft);
+    void controller.update({ ...preset.values,
+      ...(controller.draft[bank.independent] ? { [bank.initialized]: true } : {}) });
   }
   let selectedPreset = "custom";
   for (const preset of controller.state.controllerPresets) {

@@ -38,6 +38,15 @@ def payload(target: Path) -> None:
             for path in sorted(base.rglob("*")):
                 if path.is_file():
                     archive.write(path, path.relative_to(BIN).as_posix())
+        for name in ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
+            archive.write(ROOT / name, name)
+        for path in sorted((ROOT / "licenses").glob("*")):
+            if path.is_file():
+                archive.write(path, "licenses/" + path.name)
+        version = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+        notes = ROOT / "docs/releases" / (version["name"].lower().replace(" ", "-") + ".md")
+        if notes.is_file():
+            archive.write(notes, "Release-Notes.md")
 
 
 def main() -> None:

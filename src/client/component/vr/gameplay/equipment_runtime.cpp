@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 #include "render_origin_rebase.hpp"
 #include "weapon_render_pose.hpp"
+#include "../first_person_size.hpp"
 #include "component/vr/gameplay/weapon_pose_library.hpp"
 #include "shield_geometry.hpp"
 #include "hand_interaction/runtime.hpp"
@@ -139,15 +140,15 @@ namespace vr::gameplay::equipment
 				if(!sequences::chest_equipment_visible())return;
 				head_pose_bridge::spatial_frame body;
 				if (!head_pose_bridge::get_spatial_frame(body) || body.generation!=s.reference || !fresh(body.captured_at,clock::now())) return;
-				const auto chest=locate_chest(body);if (!chest.valid) return;s.world=knife_profile::stowed(chest,s.bayonet);
+				const auto chest=locate_chest(body);if (!chest.valid) return;s.world=knife_profile::stowed(chest,s.bayonet,first_person_size::value());
 			}
 			else
 			{
 				// MWR: the held knife follows the latest tracked wrist (no render-time hand record).
 				const auto h=unsigned(s.knife.holder);anchor wrist;
-				if(held_item::visual_wrist(int(h),wrist))s.world=compose({wrist.position,normalize(multiply(wrist.rotation,s.basis[h]))},in_hand(s,h));
+				if(held_item::visual_wrist(int(h),wrist))s.world=compose({wrist.position,normalize(multiply(wrist.rotation,s.basis[h])),first_person_size::value()},in_hand(s,h));
 			}
-			game::GfxScaledPlacement placement{};placement.scale=1;
+			game::GfxScaledPlacement placement{};placement.scale=s.world.scale;
 			std::copy(s.world.position.begin(),s.world.position.end(),placement.base.origin);
 			std::copy(s.world.rotation.begin(),s.world.rotation.end(),placement.base.quat);
 			float color[4]{1,1,1,1};scene_models::submit(asset,&placement,scene_models::no_cast_shadow,&lighting[unsigned(s.bayonet)],color,color,color,8.f);
@@ -176,12 +177,12 @@ namespace vr::gameplay::equipment
 			if (held)
 			{
 				const auto h=unsigned(s.knife.holder);
-				world=compose({add(pose.wrists[h].position,origin),normalize(pose.wrists[h].rotation)},knife_profile::attachment(s.knife.grip,pose.mirror_basis[h],h==1,pose.knife_poses[h],s.bayonet));
+				world=compose(hands::attachments::wrist_frame(pose,h,origin),knife_profile::attachment(s.knife.grip,pose.mirror_basis[h],h==1,pose.knife_poses[h],s.bayonet));
 			}
 			else
 			{
 				const auto body=hands::attachments::body_frame(pose,origin);
-				const auto chest=locate_chest(body);if (!chest.valid) return result::omit;world=knife_profile::stowed(chest,s.bayonet);++chest_prepared;
+				const auto chest=locate_chest(body);if (!chest.valid) return result::omit;world=knife_profile::stowed(chest,s.bayonet,first_person_size::value());++chest_prepared;
 			}
 			std::copy(world.position.begin(),world.position.end(),current.origin);std::copy(world.rotation.begin(),world.rotation.end(),current.quat);previous=current;++prepared;return result::replace;
 		}
@@ -287,7 +288,7 @@ namespace vr::gameplay::equipment
 			}
 			if (best<2)
 			{
-				const auto wrist=anchor{wrists[best].position,normalize(multiply(wrists[best].rotation,s.basis[best]))};
+				const auto wrist=anchor{wrists[best].position,normalize(multiply(wrists[best].rotation,s.basis[best])),wrists[best].scale};
 				const auto forward=compose(wrist,knife_profile::attachment(knife_grip::forward,s.mirror[best],best==1,knife_hand_pose::grip,s.bayonet));
 				const auto reverse=compose(wrist,knife_profile::attachment(knife_grip::reverse,s.mirror[best],best==1,knife_hand_pose::grip,s.bayonet));
 				const auto stowed=rotate(s.chest.anchors[0].rotation,{1,0,0});
@@ -298,11 +299,11 @@ namespace vr::gameplay::equipment
 		}
 		if (s.chest.valid)
 		{
-			s.world=knife_profile::stowed(s.chest,s.bayonet);
+			s.world=knife_profile::stowed(s.chest,s.bayonet,first_person_size::value());
 			if (vr::valid_hand(s.knife.holder))
 			{
 				const auto h=unsigned(s.knife.holder);s.visible=s.visible && (valid_hands&(1u<<h));claimed|=1u<<h;
-				s.world=compose({wrists[h].position,normalize(multiply(wrists[h].rotation,s.basis[h]))},in_hand(s,h));
+				s.world=compose({wrists[h].position,normalize(multiply(wrists[h].rotation,s.basis[h])),wrists[h].scale},in_hand(s,h));
 			}
 		}
 		{const std::lock_guard lock(mutex);published.knife=s.knife;published.bayonet=s.bayonet;published.chest=s.chest;published.world=s.world;published.visible=s.visible;published.reference=s.reference;published.at=s.at;}

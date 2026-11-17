@@ -97,10 +97,11 @@ namespace vr::controller_input
 		std::array<hand_pose, 2> runtime_aim{}; // Unfiltered adapter pointing pose.
 		std::array<hand_pose, 2> runtime_grip{}; // Unfiltered adapter grip in its reported calibration basis.
 		std::array<hand_pose, 2> sdk_grip{}, sdk_aim{}; // Before binding/reference adaptation; diagnostics only.
-		std::array<float,3> orientation_degrees{}; // pitch, yaw, roll
+		std::array<std::array<float,3>,2> orientation_degrees{}; // Physical left/right pitch, yaw, roll.
 		bool orientation_settling{}; // Position or angle calibration changed; fence physical motion history.
 		std::array<float,3> position_offsets_meters{}; // inward, back, up in the selected grip frame.
 		std::uint64_t continuity_generation{}; // Producer continuity, independent of game simulation cadence.
+		std::uint64_t retention_generation{}; // Ownership/tracking lifetime; a sampling delay alone does not drop an already held item.
 		input_observation source{}; // Diagnostic provenance only; never grants gameplay admission.
 	};
 	// Same publication, with precision admission applied to each hand. Keep
@@ -123,16 +124,21 @@ namespace vr::controller_input
 			generation_=input.continuity_generation;at_=now;seen_=true;return changed;
 		}
 	};
-	inline bool producer_discontinuity(const frame& before,const frame& after) noexcept
+	inline bool producer_retention_discontinuity(const frame& before,const frame& after) noexcept
 	{
 		if(after.pose_pipeline!=before.pose_pipeline || after.pose_reference_generation!=before.pose_reference_generation ||
 			after.sequence<before.sequence || after.reference_generation!=before.reference_generation ||
 			after.focused!=before.focused || after.orientation_settling!=before.orientation_settling ||
-			after.sampled_at<before.sampled_at || (before.sequence && after.sampled_at-before.sampled_at>std::chrono::milliseconds(150)))return true;
+			after.sampled_at<before.sampled_at)return true;
 		for(unsigned h=0;h<2;++h)
 			if(after.grip[h].valid!=before.grip[h].valid || after.aim[h].valid!=before.aim[h].valid ||
 				after.grip[h].quality!=before.grip[h].quality || after.aim[h].quality!=before.aim[h].quality)return true;
 		return false;
+	}
+	inline bool producer_discontinuity(const frame& before,const frame& after) noexcept
+	{
+		return producer_retention_discontinuity(before,after) ||
+			(before.sequence && after.sampled_at-before.sampled_at>std::chrono::milliseconds(150));
 	}
 
 	void publish(const frame& value) noexcept;

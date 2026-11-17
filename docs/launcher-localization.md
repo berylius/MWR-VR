@@ -7,7 +7,7 @@ seven shared reload recipes. Help search indexes every available translation.
 The four Asian locales use the same typography rules previously used by
 Simplified Chinese, including the embedded Latin fonts and system glyph fallback.
 
-On first use, when `players2/h2-mod/launcher.json` does not exist, the launcher
+On first use, when `players2/overlord-mwr/launcher.json` does not exist, the launcher
 matches Windows' first preferred **UI language**, not the keyboard layout or
 regional format. Regional variants share the corresponding language. Chinese
 script subtags take precedence over region; Traditional Chinese covers Hant,

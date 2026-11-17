@@ -27,8 +27,10 @@ namespace scene_models
 	// Per-submission world-unit frustum padding. Never changes the shared asset,
 	// model scale, LOD policy or another caller/thread's visibility. Native retains
 	// lighting_handle; the caller must keep that storage alive for queued work.
+	enum class visibility { native, held_item };
 	void submit(game::XModel* model, game::GfxScaledPlacement* placement, unsigned flags,
-		unsigned short* lighting_handle, float* lit, float* unlit, float* emissive, float cull_padding);
+		unsigned short* lighting_handle, float* lit, float* unlit, float* emissive, float cull_padding,
+		visibility policy=visibility::native);
 	struct preparation
 	{
 		const void* record{};
@@ -46,6 +48,15 @@ namespace scene_models
 	using placement_callback = placement_result(*)(const preparation&, const void* model_entry,
 		game::GfxPlacement& current, game::GfxPlacement& previous) noexcept;
 	void on_prepare_placement(placement_callback function);
+	// Exact owned hand DObjs only. Selection runs synchronously on a native
+	// preparation worker; never retain objects or acquire gameplay authority.
+	using visibility_callback = bool(*)(const void* object) noexcept;
+	void on_preserve_hand_visibility(visibility_callback function);
+	// Select exact persistent lighting identities of hand-attached rigid parts.
+	// World props, storage and falling items must not opt into this policy.
+	using rigid_visibility_callback=bool(*)(const void* entry) noexcept;
+	void on_preserve_rigid_visibility(rigid_visibility_callback function);
+	std::string hand_visibility_status();
 
 	enum class build_outcome : unsigned { retained=1, replaced, omitted, conflicting };
 	struct build_observation

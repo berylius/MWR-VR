@@ -1,6 +1,8 @@
 #include <std_include.hpp>
 #include "../h2/entrypoints.hpp"
 #include "../debug_options.hpp"
+#include "../settings.hpp"
+#include "../head_pose_bridge.hpp"
 #include "component/scene_models.hpp"
 #include "native_scripted_control.hpp"
 #include "physical_reload_runtime.hpp"
@@ -12,6 +14,7 @@
 #include "weapon_runtime_lifecycle.hpp"
 #include "weapon_instance_cache.hpp"
 #include "weapon_interaction.hpp"
+#include "weapon_render_owner.hpp"
 #include "native_ammo_grant.hpp"
 #include "weapon_feedback.hpp"
 #include "weapon_reload_profiles.hpp"
@@ -37,7 +40,10 @@ namespace vr::gameplay::weapons::physical_reload
 	{
 		std::atomic<unsigned> boundaries{};
 		std::atomic_bool alive{true};
+		std::uint64_t retained_pose_waits{};
 		game::dvar_t* enabled{};
+		game::dvar_t* automatic{}; // vr_autoReload
+		game::dvar_t* original_ak{};
 		std::mutex mutex;
 		scene_frame last_published_scene{}; // Diagnostics never drive mechanics.
 		instance_cache<scene_frame,carry::inventory::capacity> scenes;
@@ -57,6 +63,7 @@ namespace vr::gameplay::weapons::physical_reload
 			scene_frame last_scene{};
 			std::array<attempt,32> attempts{};
 			std::uint64_t attempt_count{}, last_input{};
+			const char* interruption{};
 			std::array<std::uint64_t,static_cast<size_t>(mechanics::effect::count)> effects{};
 		};
 		std::array<instance, 15> inventory{};
@@ -70,7 +77,7 @@ namespace vr::gameplay::weapons::physical_reload
 		int game_time{};
 		bool script_suspended{};
 		const char* reason{"waiting for native and presentation contracts"};
-		bool active() noexcept { return alive.load() && boundaries.load() == 7 && enabled && enabled->current.enabled; }
+		bool active() noexcept { return alive.load() && boundaries.load() == 7 && enabled && enabled->current.enabled && !physical_reload::native_reload(); }
 		instance* find(weapon_identity id) noexcept
 		{
 			for (auto& value : inventory) if (value.view.active && value.view.owner.id() == id) return &value;
@@ -114,6 +121,15 @@ namespace vr::gameplay::weapons::physical_reload
 				return false;
 			}
 			++commits;
+			if (tx.feedback==mechanics::effect::magazine_cancel)
+			{
+				const auto& input=value.last_scene.input;
+				console::info("[VR reload cancel] weapon=%u held=%d cause=%s sequence=%llu continuity=%llu age_ms=%lld geometry=%d manipulation=%d\n",
+					value.view.owner.weapon,value.view.ammo.held_rounds,value.interruption?value.interruption:value.gesture.decision(),
+					input.sequence,input.continuity_generation,
+					std::chrono::duration_cast<std::chrono::milliseconds>(clock::now()-input.sampled_at).count(),
+					value.last_scene.contact.valid,value.last_scene.manipulation);
+			}
 			if(tx.feedback==mechanics::effect::magazine_in)++magazine_inserts;
 			if(released)reload_items::complete_release(released,true);
 			// Continuous manual-bolt poses commit mechanically but are not feedback events.
@@ -141,11 +157,13 @@ namespace vr::gameplay::weapons::physical_reload
 			}
 			return true;
 		}
-		bool interrupt(instance& value)
+		bool interrupt(instance& value, const char* cause="explicit lifecycle interruption")
 		{
+			value.interruption=cause;
 			value.view.quick_load.reset();
 			const bool ok = value.gesture.interrupt(value.view.definition->ammunition, value.view.ammo, value.view.owner.holding_hand(),
 				[&](const auto& tx) { return commit(value, tx); });
+			value.interruption=nullptr;
 			value.view.slide_held = false;
 			value.view.belt_grip={};
 			value.view.magazine_seated = false;
@@ -230,6 +248,7 @@ namespace vr::gameplay::weapons::physical_reload
 					*value = {};
 					value->view.active = true;
 					value->view.definition = definition;
+					value->view.original_ak_attachment = original_ak_attachment();
 					value->native_name = observed.native_name;
 					++generation;
 					value->view.ammo = *initial;
@@ -250,7 +269,7 @@ namespace vr::gameplay::weapons::physical_reload
 			}
 			if (value->assembly != scene.assembly)
 			{
-				if (!interrupt(*value)) return;
+				if (!interrupt(*value,"scene assembly changed")) return;
 				value->assembly = scene.assembly;
 			}
 			value->view.owner = scene.owner.id() == observed.ammo.id() ? scene.owner : value->view.owner;
@@ -262,7 +281,7 @@ namespace vr::gameplay::weapons::physical_reload
 			const bool diagnose=debug_options::enabled(debug_options::probe::weapon_events);
 			const bool was_busy = diagnose && value->gesture.offhand_busy(value->view.ammo);
 			auto rules=value->view.definition->ammunition;rules.discard_penalty=reload_items::discard_penalty();
-			value->gesture.update(value->view.definition->interaction, rules, value->view.ammo, scene.input,
+			value->gesture.update(value->view.definition->interaction_for(value->view.original_ak_attachment), rules, value->view.ammo, scene.input,
 				value->view.owner, contact, scene.gameplay && scene.owner.id() == observed.ammo.id(), now,
 				[&](const auto& tx) { return commit(*value, tx); }, {scene.manipulation,
 				hand_interaction::granted(hand(1-int(scene.owner.holding_hand())),hand_interaction::domain::magazine,scene.owner.id()),
@@ -375,7 +394,7 @@ namespace vr::gameplay::weapons::physical_reload
 					value.view.owner.instance_generation=projected.generation;
 					// Return escrow through the new unique projection; retry the rebind
 					// after a rejected write instead of exposing unfinished gestures.
-					if (!interrupt(value)) {value.view.owner.instance_generation=previous;continue;}
+					if (!interrupt(value,"native projection changed")) {value.view.owner.instance_generation=previous;continue;}
 				}
 				const auto owned = native_ammunition::observe_owned(ps, value.view.owner.id());
 				if (!owned.valid) { value = {}; continue; } // no writes to a removed weapon's slots
@@ -394,7 +413,23 @@ namespace vr::gameplay::weapons::physical_reload
 				const auto live = std::find_if(owners.begin(),owners.end(),[&](const hold& h){return h.id()==value.view.owner.id();});
 				if (suspended || live == owners.end() || live->holding_hand() != value.view.owner.holding_hand() || live->rear_revision != value.view.owner.rear_revision)
 				{
-					if (!interrupt(value)) continue; // Retry this ledger without starving other instances.
+					const auto input=controller_input::latest_interaction();
+					const auto head=head_pose_bridge::get_status();
+					const auto* paused=game::Dvar_FindVar("cl_paused");
+					// Carry also suspends when its camera/body publication ages out.
+					// Retain only existing supply escrow; this authorizes no interaction.
+					if(suspended && live!=owners.end() && same_render_carrier(*live,value.view.owner) &&
+						head.enabled && head.pose_available && !head.recenter_pending &&
+						input.reference_generation==head.recenter_count && *game::keyCatchers==0 &&
+						paused && !paused->current.integer && value.gesture.suspend_magazine(value.view.ammo,input,*live,now))
+					{
+						value.view.decision=value.gesture.decision();
+						const auto count=++retained_pose_waits;
+						if(count<=16 || count%1000==0)console::info("[VR reload retain] weapon=%u held=%d cause=pose publication wait input_age_ms=%lld count=%llu\n",
+							live->weapon,value.view.ammo.held_rounds,std::chrono::duration_cast<std::chrono::milliseconds>(now-input.sampled_at).count(),count);
+						continue;
+					}
+					if (!interrupt(value,suspended?"gameplay suspended":live==owners.end()?"rear owner absent":"rear owner changed")) continue; // Retry this ledger without starving other instances.
 				}
 			}
 			if (!interactions) return;
@@ -644,6 +679,8 @@ namespace vr::gameplay::weapons::physical_reload
 		runtime_lifecycle::publish_scene(scenes,last_published_scene,value,ownership);
 	}
 	void set_boundary_ready(unsigned bit) noexcept { boundaries.fetch_or(bit); }
+	bool native_reload() noexcept { return automatic && automatic->current.enabled; }
+	bool original_ak_attachment() noexcept { return original_ak && original_ak->current.enabled; }
 	bool blocks_reload(const void* ps, int side) noexcept
 	{
 		if (side || native_ammunition::local_role(ps) < 0) return false;
@@ -724,6 +761,10 @@ namespace vr::gameplay::weapons::physical_reload
 		{
 			enabled = dvars::register_bool("vr_physicalReload", true, game::DVAR_FLAG_SAVED,
 				"Authored weapon physical magazine/chamber/slide interaction; intermediate saves unsupported");
+			automatic = dvars::register_bool(settings::auto_reload.name, settings::auto_reload.default_value, game::DVAR_FLAG_SAVED,
+				"Native reload with the stock animation (B or empty magazine) instead of physical magazine/shell/cylinder/break-action feeds");
+			original_ak = dvars::register_bool(settings::original_ak_attachment.name, settings::original_ak_attachment.default_value,
+				game::DVAR_FLAG_SAVED, "Original Overlord AK magazine rail attachment; restart to apply to existing instances");
 			command::add("vr_reload_interaction_status", [] {
 				// Snapshot under the gameplay lock; formatting/console/I/O must not
 				// block scene publication or the authoritative simulation callback.

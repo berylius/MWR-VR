@@ -7,6 +7,6 @@
 // offset, and the VR arms give way to the native rig.
 namespace vr::gameplay::scripted_motion
 {
-	int linked_parent() noexcept; // Linked script entity, or -1.
+	int linked_parent(int entity=0) noexcept; // Immediate script parent, or -1.
 	bool active() noexcept;
 }

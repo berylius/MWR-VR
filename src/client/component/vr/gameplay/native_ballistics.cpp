@@ -2,6 +2,7 @@
 #include "../h2/entrypoints.hpp"
 #include "native_scripted_control.hpp"
 #include "native_ballistics.hpp"
+#include "native_tracer.hpp"
 #include "official_cheats.hpp"
 #include "native_shield.hpp"
 #include "muzzle_clearance.hpp"
@@ -163,6 +164,7 @@ namespace vr::gameplay::weapons::native_ballistics
 		if (entity->client!=reinterpret_cast<game::gclient_s*>(ps) ||
 			native_ammunition::timeline()!=timeline || !game::CL_IsCgameInitialized() || ps->commandTime!=command_time)
 		{out.status=outcome::context_changed;return out;}
+		tracers::owner_scope tracer_owner{id};
 		utils::hook::invoke<void>(bullet_address,entity,spread,&packet,entity,command_time,-1.f);
 		out.status=outcome::emitted;
 		if (entity->client==reinterpret_cast<game::gclient_s*>(ps))

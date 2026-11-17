@@ -47,6 +47,23 @@ namespace vr::head_pose_bridge
 		game_view::state game_view_state;
 		game_view::camera_rig scripted_camera;
 		game_view::roomscale_origin roomscale;
+		// Room-scale walking (GitHub MWR-VR #7): the body follows the physical head.
+		// The command thread moves the player toward the head; whatever part of that
+		// the body really travelled is taken out of the tracking frame (offset, world
+		// metres), so the view is not moved twice and a wall still stops the body.
+		struct walk_follow
+		{
+			vector3 offset{};             // World metres removed from the tracking frame.
+			std::array<float,2> target{}; // Head minus body, world units (last ordinary camera).
+			std::chrono::steady_clock::time_point published{};
+			std::array<float,2> commanded{};
+			bool commanded_valid{}, origin_valid{};
+			std::array<float,2> origin{};
+			int time{}, last_command{};
+			std::uint64_t reference{};
+			std::uint64_t absorbed_frames{};
+			float absorbed_units{};
+		} walk;
 		game_view::continuous_angles absolute_angles, local_angles;
 		game_view::horizontal_heading local_heading;
 		std::uint64_t game_view_applications{};
@@ -447,7 +464,7 @@ namespace vr::head_pose_bridge
 		body_estimator.reset();
 		pose_sampled_at = {};
 		game_view_state = {};remote_view_state={};
-		roomscale.reset();
+		roomscale.reset();walk = {};
 		roomscale_offset_meters = {};
 		scripted_camera = {};
 		absolute_angles = local_angles = {};
@@ -493,7 +510,7 @@ namespace vr::head_pose_bridge
 		stabilization::invalidate();
 		head_filter.reset();tracking_correction={};head_stabilized=false;
 		game_view_state={};remote_view_state={};scripted_camera={};camera_frame_available=false;camera_applied=false;
-		roomscale.reset();
+		roomscale.reset();walk = {};
 		roomscale_offset_meters = {};
 		body_estimator.reset();
 	}
@@ -555,8 +572,28 @@ namespace vr::head_pose_bridge
 		const std::lock_guard lock(state_mutex);
 		game_view_state.record(command_time, packed_pitch, tracked);
 		roomscale.record(command_time);
+		// A load restarts command time: the walked offset belonged to the old level.
+		if (walk.last_command && command_time < walk.last_command) walk = {};
+		walk.last_command = command_time;
 		remote_view_state.record(command_time);
 		if (tracked) scripted_camera.record(command_time);
+	}
+
+	bool roomscale_follow_target(std::array<float,2>& target) noexcept
+	{
+		const std::lock_guard lock(state_mutex);
+		const auto now = std::chrono::steady_clock::now();
+		if (!target_matched || !enabled || !pose_available || recenter_pending ||
+			now < walk.published || now - walk.published > std::chrono::milliseconds(150)) return false;
+		target = walk.target;
+		return std::isfinite(target[0]) && std::isfinite(target[1]);
+	}
+
+	void roomscale_follow_commanded(const std::array<float,2>& displacement) noexcept
+	{
+		const std::lock_guard lock(state_mutex);
+		walk.commanded = displacement;
+		walk.commanded_valid = std::hypot(displacement[0], displacement[1]) > 0.f;
 	}
 
 	bool resolve_game_pitch(const int command_time, const int packed_pitch,
@@ -636,6 +673,38 @@ namespace vr::head_pose_bridge
 			++composition_failure_count;return false;
 		}
 		auto head_offset=composed.head_offset;for(auto& x:head_offset)x*=world_scale;
+		if (ordinary)
+		{
+			if (walk.reference != recenter_count) walk = {.last_command = walk.last_command, .reference = recenter_count};
+			// Take the travelled part of the last follow command out of the frame: only
+			// motion along the commanded direction and no more than was asked, so a
+			// vehicle, a push or the stick still move the view with the body.
+			if (command_time > walk.time)
+			{
+				const std::array<float,2> body{original_origin[0], original_origin[1]};
+				if (walk.origin_valid && walk.commanded_valid && world_scale > 0.f)
+				{
+					const auto length = std::hypot(walk.commanded[0], walk.commanded[1]);
+					const auto along = ((body[0]-walk.origin[0])*walk.commanded[0] + (body[1]-walk.origin[1])*walk.commanded[1]) / length;
+					const auto travelled = std::clamp(along, 0.f, length);
+					if (std::isfinite(travelled) && travelled > 0.f)
+					{
+						for (unsigned i = 0; i < 2; ++i) walk.offset[i] += walk.commanded[i] / length * travelled / world_scale;
+						++walk.absorbed_frames;walk.absorbed_units += travelled;
+					}
+				}
+				walk.commanded_valid = false;
+				walk.origin = body;walk.origin_valid = true;walk.time = command_time;
+			}
+			for (unsigned i = 0; i < 2; ++i) turn_offset_meters[i] -= walk.offset[i];
+			// Head minus body, horizontal world units: what the body still has to walk.
+			for (unsigned w = 0; w < 2; ++w)
+			{
+				walk.target[w] = turn_offset_meters[w] * world_scale;
+				for (unsigned i = 0; i < 3; ++i) walk.target[w] += head_offset[i] * base_yaw_axis[i][w];
+			}
+			walk.published = std::chrono::steady_clock::now();
+		}
 		vector3 composed_origin=original_origin;
 		for (unsigned i=0;i<3;++i) composed_origin[i]+=turn_offset_meters[i]*world_scale;
 		for(unsigned world_axis=0;world_axis<3;++world_axis)for(unsigned i=0;i<3;++i)

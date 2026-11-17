@@ -50,6 +50,19 @@ namespace vr::native_post_aa
 		return (target >= 16 && target <= 19 && temporal(value)) ||
 			(target >= 20 && target <= 21 && filmic(value));
 	}
+	// A scene launched with None/FXAA has no SMAA buffers. More expensive
+	// modes also need history/temporal inputs created at the next renderer reset.
+	// Choose only a mode whose optional native resources already exist.
+	template<class Available>
+	[[nodiscard]] constexpr mode transition_fallback(mode selected, Available available)
+	{
+		if (selected < mode::smaa || !supported(selected)) return selected;
+		if (!available(smaa_edge_target) || !available(smaa_blend_target)) return mode::fxaa;
+		if (needs_temporal_input(selected) && !available(temporal_input_target)) return mode::smaa;
+		for (const auto target : history_targets)
+			if (needs_history(selected, target) && !available(target)) return mode::smaa;
+		return selected;
+	}
 
 	enum class resource_role { ldr_color, smaa_edges, smaa_blend };
 	[[nodiscard]] constexpr resource_role target_role(std::uint32_t target) noexcept

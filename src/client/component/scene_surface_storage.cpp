@@ -1,6 +1,7 @@
 #include <std_include.hpp>
 #include "scene_surface_layout.hpp"
-#include "scene_surface_storage_contract.hpp"
+#include "scene_surface_storage.hpp"
+#include "mwr_scene_surface_storage_contract.hpp"
 #include "console.hpp"
 #include "loader/component_loader.hpp"
 #include "loader/target_identity.hpp"
@@ -11,6 +12,7 @@ namespace scene_surface_storage
 {
 	namespace
 	{
+		bool mock_pressure{};
 		// Keep the SAME separation as the two native frontend records. A single
 		// verified displacement then selects the matching bank from either native
 		// frontend pointer, including backend workers still consuming the prior
@@ -37,13 +39,30 @@ namespace scene_surface_storage
 				throw std::runtime_error(std::format("native surface storage ABI rejected at {:X}",at));
 		}
 	}
+	void reserve_mock_test_prefix() noexcept
+	{
+		if(!mock_pressure || !GetModuleHandleW(L"mockxr.dll"))return;
+		const auto frontend=*reinterpret_cast<std::uintptr_t*>(0x15182A680);
+		if(!frontend)return;
+		auto* cursor=reinterpret_cast<volatile LONG*>(frontend+0x540c14);
+		// Reserve unused padding through the SAME atomic cursor as all native
+		// writers. Existing reservations remain intact; the normal bank reset
+		// drops the padding next frame. This tests real draws above 256 KiB.
+		LONG observed=InterlockedCompareExchange(cursor,0,0);
+		while(observed>=0 && observed<0x40000)
+		{
+			const auto previous=InterlockedCompareExchange(cursor,0x40000,observed);
+			if(previous==observed)break;
+			observed=previous;
+		}
+	}
 	class component final:public component_interface
 	{
 	public:
 		void post_unpack() override
 		{
 			if(!target_identity::get().compatibility_probe_passed)
-				throw std::runtime_error("surface storage requires the verified H2 image");
+				throw std::runtime_error("surface storage requires the verified MWR image");
 			const auto displacement=reinterpret_cast<std::intptr_t>(banks.data())-
 				static_cast<std::intptr_t>(native_first_frontend);
 			if(displacement<=0 || displacement>INT32_MAX || displacement%index_unit)
@@ -67,7 +86,7 @@ namespace scene_surface_storage
 			// Match the complete diagnostic text before adjusting its exponent.
 			// Keep native warning behavior; a future 512 KiB overflow must be visible.
 			constexpr char warning[]="MAX_SCENE_SURFS_SIZE(( 1 << ( 16 + 2 ) )) exceeded - not drawing surface\n";
-			constexpr std::uintptr_t warning_address=0x1409afa50;
+			constexpr std::uintptr_t warning_address=0x1407fec20; // H2 0x1409AFA50
 			verify(warning_address,reinterpret_cast<const std::uint8_t*>(warning),sizeof(warning));
 			const auto digit=std::string_view{warning}.find("16 + 2")+5;
 			std::size_t applied{};bool committed{};bool warning_written{};
@@ -87,7 +106,10 @@ namespace scene_surface_storage
 			if(!write(reinterpret_cast<void*>(warning_address+digit),"3",1))
 				throw std::runtime_error("surface storage warning update failed");
 			committed=true;
-			// Allocations still use H2's original atomic cursor and original reset.
+			char pressure[2]{};
+			mock_pressure=GetEnvironmentVariableA("OVERLORD_MWR_MOCK_SURFACE_PRESSURE",pressure,sizeof(pressure))==1 && pressure[0]=='1';
+			if(mock_pressure)console::info("[scene surfaces] offline mock pressure requested: 256 KiB reserved prefix\n");
+			// Allocations still use H1's original atomic cursor and original reset.
 			// There is no per-model lookup, copy, new lock or per-frame allocation.
 			console::info("[scene surfaces] 512 KiB per frontend; 8-byte indices; %zu ABI sites verified\n",patches.size());
 		}

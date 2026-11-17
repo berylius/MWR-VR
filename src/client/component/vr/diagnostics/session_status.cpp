@@ -7,6 +7,7 @@
 #include "game/game.hpp"
 #include "component/game_module.hpp"
 #include "../settings.hpp"
+#include "../shader_preload.hpp"
 #include "launcher/risk_settings_config.hpp"
 #include <utils/native_memory.hpp>
 #include <utils/nt.hpp>
@@ -160,6 +161,8 @@ namespace vr::diagnostics::detail
 		for(const auto& setting:settings::toggles)append_setting(out,setting.name);
 		for(const auto& setting:settings::numbers)append_setting(out,setting.name);
 		for(const auto& setting:launcher_vr_settings::risk_settings)append_setting(out,setting.name);
+		append_setting(out,"r_preloadShadersAfterCinematic");
+		shader_preload::append_status(out);
 		for(const auto* name:{"r_postAA","r_displayMode","r_mode","r_vsync","com_maxfps","vr_engineProbe"})append_setting(out,name);
 	}
 }

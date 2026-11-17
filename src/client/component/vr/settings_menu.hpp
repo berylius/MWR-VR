@@ -19,6 +19,7 @@ namespace vr::settings_menu
 		int enabled_level{1};
 		std::vector<option> options;
 		std::string when_name, when_value; // Shown only while when_name's value equals when_value.
+		std::vector<option> conditions;
 	};
 	// language: native language_t (Engine.GetCurrentLanguage).
 	std::vector<entry> catalog(int language);

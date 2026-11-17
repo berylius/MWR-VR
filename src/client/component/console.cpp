@@ -9,17 +9,12 @@
 #include "game/game.hpp"
 
 #include "command.hpp"
-#include "game_console.hpp"
 
 #include <utils/thread.hpp>
 #include <utils/hook.hpp>
 
 #define OUTPUT_HANDLE GetStdHandle(STD_OUTPUT_HANDLE)
 
-namespace game_console
-{
-	void print(int type, const std::string& data);
-}
 
 namespace console
 {
@@ -133,7 +128,6 @@ namespace console
 			const auto res = invoke_printf("%s", message.data());
 			SetConsoleTextAttribute(OUTPUT_HANDLE, get_attribute(con_type_info));
 
-			game_console::print(type, message);
 
 			if (message.size() <= 0 || message[message.size() - 1] != '\n')
 			{
@@ -301,7 +295,7 @@ namespace console
 
 				con.history_index = -1;
 
-				game_console::add(con.buffer);
+				command::execute(con.buffer);
 
 				con.cursor = 0;
 

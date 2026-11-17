@@ -58,6 +58,9 @@ namespace
 		}
 
 		const std::string_view proc_name{lpProcName};
+		if (hModule == GetModuleHandleW(L"kernel32.dll") || hModule == GetModuleHandleW(L"kernelbase.dll"))
+			if (auto* hook = game_data::resolve_profile_import("kernel32.dll", std::string(proc_name)))
+				return reinterpret_cast<FARPROC>(hook);
 		if (proc_name == "ExitProcess")
 		{
 			return reinterpret_cast<FARPROC>(exit_hook);
@@ -126,6 +129,7 @@ namespace
 
 		loader.set_import_resolver([self](const std::string& library, const std::string& function) -> void*
 		{
+			if (auto* hook = game_data::resolve_profile_import(library, function)) return hook;
 			// MWR imports steam_api64; resolve it to the exported emulation
 			// (h1-mod). Arxan needs one genuine import.
 			if (library == "steam_api64.dll" && function != "SteamAPI_GetSteamInstallPath")
@@ -179,8 +183,8 @@ namespace
 	{
 		// On-disk (still encrypted) .text dword of the supported Steam
 		// h1_sp64_ship.exe, sha256 3d23e869...b41f9190.
-		const auto value = *reinterpret_cast<DWORD*>(0x140123456);
-		if (value != 0xD0BC8AA6)
+		const auto value = *reinterpret_cast<DWORD*>(game::mwr::image::base + game::mwr::image::version_probe_rva);
+		if (value != game::mwr::image::version_probe_value)
 		{
 			throw std::runtime_error("Unsupported Call of Duty: Modern Warfare Remastered version");
 		}
@@ -274,6 +278,7 @@ int main()
 			auto mode = detect_mode_from_arguments();
 
 			game::environment::set_mode(mode);
+			game_data::initialize_players_folder();
 			launcher_vr_settings::initialize_startup_options(utils::flags::has_flag("launcher-start"));
 			launcher_process::ensure_steamvr_for_openvr();
 

@@ -156,6 +156,10 @@ namespace vr::head_pose_bridge
 		std::array<float,2> stick,int command_time,std::uint64_t epoch)noexcept;
 	void suspend_remote_view()noexcept;
 	void record_game_command(int command_time, int packed_pitch = 0, bool tracked = false) noexcept;
+	// Room-scale walking: head minus body (horizontal world units) from the last
+	// ordinary camera, and the displacement the next command asks the body for.
+	[[nodiscard]] bool roomscale_follow_target(std::array<float,2>& target) noexcept;
+	void roomscale_follow_commanded(const std::array<float,2>& displacement) noexcept;
 	[[nodiscard]] bool resolve_game_pitch(int command_time, int packed_pitch,
 		float delta_pitch, float& pitch) noexcept;
 	[[nodiscard]] bool apply_camera(float* origin, float (*axis)[3], int command_time = 0,

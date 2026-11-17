@@ -9,6 +9,39 @@ return function()
 		targetdir ("%{wks.location}/bin/%{cfg.platform}/%{cfg.buildcfg}/vr-tests/" .. output_directory)
 	end
 
+	test_executable("mwr-scene-surface-storage-tests", "mwr-scene-surfaces")
+		files {"./tests/vr/mwr_scene_surface_storage_tests.cpp"}
+		includedirs {"./src/client"}
+
+	test_executable("mwr-host-adaptation-tests", "mwr-host")
+		files {"./tests/vr/mwr_host_adaptation_tests.cpp", "./src/client/component/game_data.cpp",
+			"./src/client/component/vr/engine_stereo_view.cpp", "./src/client/component/vr/engine_stereo_bridge.cpp",
+			"./src/client/component/vr/openxr_image_lifetime.cpp"}
+		includedirs {"./tests/vr", "./src/client"}
+		gsl.import()
+		openxr.import()
+		vulkan_headers.import()
+		buildoptions {"/Gy"}
+		linkoptions {"/OPT:REF"}
+		links {"d3d11", "dxgi", "dxguid", "d3dcompiler"}
+
+	test_executable("vr-mounted-camera-transport-tests", "mounted-camera-transport")
+		files {"./tests/vr/mounted_camera_transport_tests.cpp"}
+		includedirs {"./src/client"}
+
+	test_executable("vr-mounted-hand-aim-tests", "mounted-hand-aim")
+		files {"./tests/vr/mounted_hand_aim_tests.cpp"}
+		includedirs {"./src/client"}
+
+	test_executable("vr-height-measurement-tests", "height-measurement")
+		files {"./tests/vr/height_measurement_tests.cpp"}
+		includedirs {"./src/client"}
+
+	test_executable("vr-held-magazine-visibility-tests", "held-magazine-visibility")
+		files {"./tests/vr/held_magazine_visibility_tests.cpp"}
+		includedirs {"./src/client"}
+		asmjit.import()
+
 	test_executable("vr-support-diagnostics-tests", "support-diagnostics")
 		files {"./tests/vr/support_diagnostics_tests.cpp", "./src/client/component/vr/diagnostics/support_archive.cpp",
 			"./src/common/utils/compression.cpp"}
@@ -30,6 +63,7 @@ return function()
 		"./src/client/component/vr/openxr_layer_policy.cpp",
 		"./src/client/component/vr/openxr_layer_policy.hpp",
 		"./src/client/component/vr/openxr_d3d11.cpp",
+		"./src/client/component/vr/openxr_image_lifetime.cpp",
 		"./src/client/component/vr/openxr_d3d11.hpp",
 		"./src/client/component/vr/openxr_runtime.cpp",
 		"./src/client/component/vr/openxr_input.cpp",
@@ -252,6 +286,10 @@ return function()
 		includedirs {"./src/client"}
 		asmjit.import()
 
+	test_executable("vr-held-weapon-visibility-tests", "held-weapon-visibility")
+		files {"./tests/vr/held_weapon_visibility_tests.cpp"}
+		includedirs {"./src/client"}
+
 	test_executable("vr-weapon-grip-tests", "weapon-grip")
 		links {"vr-weapon-catalog"}
 		files {"./tests/vr/weapon_grip_tests.cpp"}
@@ -272,6 +310,10 @@ return function()
 		files {"./tests/vr/physical_reload_tests.cpp"}
 		includedirs {"./src/client"}
 
+	test_executable("vr-mounted-aa-ak-tests", "mounted-aa-ak")
+		files {"./tests/vr/mounted_aa_ak_tests.cpp"}
+		includedirs {"./src/client"}
+
 	test_executable("vr-hand-interaction-tests", "hand-interaction")
 		files {"./tests/vr/hand_interaction_tests.cpp"}
 		includedirs {"./src/client"}
@@ -283,6 +325,31 @@ return function()
 	test_executable("vr-underbarrel-tests", "underbarrel")
 		files {"./tests/vr/underbarrel_tests.cpp"}
 		includedirs {"./src/client"}
+
+	test_executable("vr-underbarrel-clearance-tests", "underbarrel-clearance")
+		files {"./tests/vr/underbarrel_clearance_tests.cpp"}
+		includedirs {"./src/client", "./src/common"}
+
+	test_executable("vr-beta8-adaptation-tests", "beta8-adaptations")
+		files {"./tests/vr/beta8_adaptation_tests.cpp"}
+		includedirs {"./src/client", "./src/common"}
+		gsl.import()
+
+	test_executable("vr-tracer-tests", "tracers")
+		files {"./tests/vr/tracer_tests.cpp"}
+		includedirs {"./src/client"}
+
+	test_executable("vr-tracer-material-tests", "tracer-materials")
+		files {"./tests/vr/tracer_material_tests.cpp", "./src/client/component/vr/gameplay/tracer_material.cpp"}
+		includedirs {"./tests/vr", "./src/client", "./src/common"}
+		gsl.import()
+		links {"d3d11", "dxgi", "d3dcompiler"}
+
+	test_executable("vr-first-person-size-tests", "first-person-size")
+		files {"./tests/vr/first_person_size_tests.cpp", "./src/client/component/vr/gameplay/first_person_mesh_size.cpp"}
+		includedirs {"./tests/vr", "./src/client", "./src/common"}
+		gsl.import()
+		links {"d3d11", "dxgi"}
 
 	test_executable("vr-quick-reload-tests", "quick-reload")
 		links {"vr-weapon-catalog"}

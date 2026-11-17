@@ -40,6 +40,9 @@ namespace vr::openxr
 		std::string& error, XrResult& last_result);
 	[[nodiscard]] bool release_acquired_image(const dispatch_table& dispatch, eye_swapchain& eye,
 		XrResult& last_result) noexcept;
+	// A timeout retains the acquisition; the next call retries only its wait.
+	[[nodiscard]] bool wait_acquired_image(const dispatch_table& dispatch, eye_swapchain& eye,
+		XrResult& last_result) noexcept;
 	[[nodiscard]] bool destroy_eye_swapchain(const dispatch_table& dispatch, eye_swapchain& eye,
 		XrResult& last_result, bool destroy_handle = true) noexcept;
 }

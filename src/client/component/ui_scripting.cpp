@@ -10,14 +10,7 @@
 #include "filesystem.hpp"
 #include "scripting.hpp"
 #include "fastfiles.hpp"
-#include "mods.hpp"
-#include "mod_stats.hpp"
-#include "updater.hpp"
 #include "console.hpp"
-#include "language.hpp"
-#include "config.hpp"
-#include "motd.hpp"
-#include "achievements.hpp"
 #include "camera.hpp"
 #include "vr/gameplay/weapon_hud_source.hpp"
 #include "vr/gameplay/weapon_carry_runtime.hpp"
@@ -48,6 +41,7 @@ namespace ui_scripting
 		const auto lui_campaign_unlock = utils::nt::load_resource(LUI_CAMPAIGN_UNLOCK);
 		const auto lui_subtitles = utils::nt::load_resource(LUI_SUBTITLES);
 		const auto lui_vr_options = utils::nt::load_resource(LUI_VR_OPTIONS);
+		const auto lui_vr_height_art = utils::nt::load_resource(LUI_VR_HEIGHT_ART);
 		const auto lua_json = utils::nt::load_resource(LUA_JSON);
 
 		using lua_function_t = std::function<arguments(const function_arguments& args)>;
@@ -285,14 +279,6 @@ namespace ui_scripting
 			lua["io"]["readfile"] = filesystem::safe_io_func<std::string>(
 				static_cast<std::string(*)(const std::string&)>(utils::io::read_file));
 
-			auto language_table = table();
-			language_table["isnonlatin"] = language::is_non_latin;
-			language_table["isslavic"] = language::is_slavic;
-			language_table["isarabic"] = language::is_arabic;
-			language_table["isasian"] = language::is_asian;
-			language_table["iscustom"] = language::is_custom;
-
-			lua["language"] = language_table;
 
 			using game = table;
 			auto game_type = game();
@@ -314,6 +300,15 @@ namespace ui_scripting
 					row["min"] = e.min;row["max"] = e.max;row["step"] = e.step;row["scale"] = e.scale;
 					row["enabledLevel"] = e.enabled_level;
 					row["whenName"] = e.when_name;row["whenValue"] = e.when_value;
+					table conditions;
+					int condition_index=1;
+					for (const auto& condition : e.conditions)
+					{
+						table item;
+						item["name"]=condition.value;item["value"]=condition.label;
+						conditions.set(condition_index++,item);
+					}
+					row["conditions"]=conditions;
 					table options;
 					int option_index = 1;
 					for (const auto& option : e.options)
@@ -452,53 +447,6 @@ namespace ui_scripting
 				return std::string(buffer);
 			};
 
-			game_type["getloadedmod"] = [](const game&)
-			{
-				const auto& path = mods::get_mod();
-				return path.value_or("");
-			};
-
-			game_type["setlanguage"] = [](const game&, const std::string& language)
-			{
-				language::set(language);
-			};
-
-			game_type["fastfileexists"] = [](const game&, const std::string& name)
-			{
-				return fastfiles::exists(name);
-			};
-
-			game_type["openlink"] = [](const game&, const std::string& name)
-			{
-				const auto links = motd::get_links();
-				const auto link = links.find(name);
-				if (link == links.end())
-				{
-					return;
-				}
-
-				ShellExecuteA(nullptr, "open", link->second.data(), nullptr, nullptr, SW_SHOWNORMAL);
-			};
-
-			game_type["getlinkurl"] = [](const game&, const std::string& name)
-				-> script_value
-			{
-				const auto links = motd::get_links();
-				const auto link = links.find(name);
-				if (link == links.end())
-				{
-					return script_value();
-				}
-
-				return link->second;
-			};
-
-			game_type["islink"] = [](const game&, const std::string& name)
-			{
-				const auto links = motd::get_links();
-				const auto link = links.find(name);
-				return link != links.end();
-			};
 
 			lua["string"]["escapelocalization"] = [](const std::string& str)
 			{
@@ -507,11 +455,6 @@ namespace ui_scripting
 
 			lua["string"]["el"] = lua["string"]["escapelocalization"];
 
-			lua["Engine"]["SetLanguage"] = [](const int index)
-			{
-				language::set_from_index(index);
-				updater::relaunch();
-			};
 
 			using player = table;
 			auto player_type = player();
@@ -554,407 +497,8 @@ namespace ui_scripting
 				}, ::scheduler::pipeline::server);
 			};
 
-			auto updater_table = table();
-			lua["updater"] = updater_table;
-
-			updater_table["relaunch"] = updater::relaunch;
-
-			updater_table["sethastriedupdate"] = updater::set_has_tried_update;
-			updater_table["gethastriedupdate"] = updater::get_has_tried_update;
-			updater_table["autoupdatesenabled"] = updater::auto_updates_enabled;
-			updater_table["updatesavailable"] = updater::updates_available;
-
-			updater_table["startupdatecheck"] = updater::start_update_check;
-			updater_table["isupdatecheckdone"] = updater::is_update_check_done;
-			updater_table["getupdatecheckstatus"] = updater::get_update_check_status;
-			updater_table["isupdateavailable"] = updater::is_update_available;
-
-			updater_table["startupdatedownload"] = updater::start_update_download;
-			updater_table["isupdatedownloaddone"] = updater::is_update_download_done;
-			updater_table["getupdatedownloadstatus"] = updater::get_update_download_status;
-			updater_table["cancelupdate"] = updater::cancel_update;
-			updater_table["isrestartrequired"] = updater::is_restart_required;
-			updater_table["shouldforceupdate"] = updater::should_force_update;
-
-			updater_table["getlasterror"] = updater::get_last_error;
-			updater_table["getcurrentfile"] = updater::get_current_file;
-
-			updater_table["getcurrentbranch"] = []()
-			{
-				const auto branch = updater::get_current_branch();
-				return static_cast<int>(branch);
-			};
-
-			updater_table["setbranch"] = [](const std::uint32_t branch)
-			{
-				updater::set_branch(static_cast<updater::git_branch>(branch));
-			};
-
-			updater_table["develop"] = static_cast<int>(updater::branch_develop);
-			updater_table["main"] = static_cast<int>(updater::branch_main);
-
-			auto mods_table = table();
-			lua["mods"] = mods_table;
-
-			mods_table["getloaded"] = []() -> script_value
-			{
-				const auto& mod = mods::get_mod();
-				if (mod.has_value())
-				{
-					return mod.value();
-				}
-
-				return {};
-			};
-
-			mods_table["getlist"] = mods::get_mod_list;
-			mods_table["getinfo"] = [](const std::string& mod)
-			{
-				table info_table{};
-				const auto info = mods::get_mod_info(mod);
-				const auto has_value = info.has_value();
-				info_table["isvalid"] = has_value;
-
-				if (!has_value)
-				{
-					return info_table;
-				}
-
-				const auto& map = info.value();
-				for (const auto& [key, value] : map.items())
-				{
-					info_table[key] = json_to_lua(value);
-				}
-
-				return info_table;
-			};
-
-			mods_table["load"] = [](const std::string& mod)
-			{
-				scheduler::once([=]()
-				{
-					mods::load(mod);
-				}, scheduler::main);
-			};
-
-			mods_table["unload"] = []
-			{
-				scheduler::once([]()
-				{
-					mods::unload();
-				}, scheduler::main);
-			};
-			
-			auto mods_stats_table = table();
-			mods_table["stats"] = mods_stats_table;
-			
-			const auto set_stats_func = [](const variadic_args& va)
-			{
-				mod_stats::get_stats().access([&](mod_stats::mod_stats_t& stats)
-				{
-					auto obj = &stats;
-					for (auto i = 0u; i < va.size() - 1; i++)
-					{
-						const auto key = va[i].as<std::string>();
-
-						if (!obj->contains(key))
-						{
-							obj->operator[](key) = nlohmann::json::object();
-						}
-
-						obj = &obj->at(key);
-					}
-
-					const auto json_value = lua_to_json(va.back());
-					*obj = json_value;
-
-					mod_stats::set_modified();
-				});
-			};
-
-			mods_stats_table["set"] = set_stats_func;
-			game_type["statsset"] = [&](const game&, const variadic_args& va)
-			{
-				return set_stats_func(va);
-			};
-
-			const auto get_stats_func = [](const variadic_args& va, int offset)
-			{
-				const auto value = mod_stats::get_stats().access<nlohmann::json>([&](mod_stats::mod_stats_t& stats)
-					-> nlohmann::json
-				{
-					auto obj = &stats;
-					for (auto i = 0u; i < va.size() - offset; i++)
-					{
-						const auto key = va[i].as<std::string>();
-
-						if (!obj->contains(key))
-						{
-							return {};
-						}
-
-						obj = &obj->at(key);
-					}
-
-					return *obj;
-				});
-
-				return value;
-			};
-
-			mods_stats_table["get"] = [&](const variadic_args& va)
-			{
-				return json_to_lua(get_stats_func(va, 0));
-			};
-
-			game_type["statsget"] = [&](const game&, const variadic_args& va)
-			{
-				return json_to_lua(get_stats_func(va, 0));
-			};
-
-			const auto has_stats_func = [](const variadic_args& va)
-			{
-				const auto value = mod_stats::get_stats().access<bool>([&](mod_stats::mod_stats_t& stats)
-					-> nlohmann::json
-				{
-					auto obj = &stats;
-					for (auto i = 0u; i < va.size(); i++)
-					{
-						const auto key = va[i].as<std::string>();
-
-						if (!obj->contains(key))
-						{
-							return false;
-						}
-
-						obj = &obj->at(key);
-					}
-
-					return !obj->is_null();
-				});
-
-				return value;
-			};
-
-			mods_stats_table["has"] = has_stats_func;
-			game_type["statshas"] = [&](const game&, const variadic_args& va)
-			{
-				return has_stats_func(va);
-			};
-
-			mods_stats_table["getor"] = [&](const variadic_args& va)
-			{
-				const auto& default_value = va.back();
-				const auto value = get_stats_func(va, 1);
-
-				if (value.is_null())
-				{
-					return default_value;
-				}
-				else
-				{
-					return json_to_lua(value);
-				}
-			};
-
-			mods_stats_table["setstruct"] = [](const std::string& mapname,
-				const std::string& key, const script_value& value)
-			{
-				const auto json_value = lua_to_json(value);
-				mod_stats::set_struct(mapname, key, json_value);
-			};
-
-			mods_stats_table["getstruct"] = [](const std::string& mapname,
-				const std::string& key)
-			{
-				return json_to_lua(mod_stats::get_struct(mapname, key));
-			};
-
-			mods_stats_table["getstructor"] = [](const std::string& mapname,
-				const std::string& key, const script_value& default_value)
-			{
-				const auto json_default_value = lua_to_json(default_value);
-				return json_to_lua(mod_stats::get_struct(mapname, key, json_default_value));
-			};
-
-			mods_stats_table["save"] = mod_stats::write;
-			mods_stats_table["getall"] = []()
-			{
-				return json_to_lua(mod_stats::get_all());
-			};
-
-			mods_stats_table["setfromjson"] = [](const std::string& data)
-			{
-				const auto json = nlohmann::json::parse(data);
-				mod_stats::set_all(json);
-			};
-
-			auto config_table = table();
-			lua["config"] = config_table;
-
-			config_table["get"] = [](const std::string& key, const variadic_args& va)
-				-> script_value
-			{
-				const auto value = config::get_raw(key);
-				return json_to_lua(value);
-			};
-
-			config_table["getstring"] = [](const std::string& key, const variadic_args& va)
-				-> script_value
-			{
-				const auto default_value = va.size() >= 1 ? va[0] : script_value("");
-				const auto value = config::get<nlohmann::json>(key);
-
-				if (!value.has_value())
-				{
-					return default_value;
-				}
-
-				const auto& json = value.value();
-				if (!json.is_string())
-				{
-					return default_value;
-				}
-
-				return json.get<std::string>();
-			};
-
-			config_table["getint"] = [](const std::string& key, const variadic_args& va)
-				-> script_value
-			{
-				const auto default_value = va.size() >= 1 ? va[0] : script_value(0);
-				const auto value = config::get<nlohmann::json>(key);
-
-				if (!value.has_value())
-				{
-					return default_value;
-				}
-
-				const auto& json = value.value();
-				if (!json.is_number_integer())
-				{
-					return default_value;
-				}
-
-				return json.get<int>();
-			};
-
-			config_table["getfloat"] = [](const std::string& key, const variadic_args& va)
-				-> script_value
-			{
-				const auto default_value = va.size() >= 1 ? va[0] : script_value(0.f);
-				const auto value = config::get<nlohmann::json>(key);
-
-				if (!value.has_value())
-				{
-					return default_value;
-				}
-
-				const auto& json = value.value();
-				if (!json.is_number())
-				{
-					return default_value;
-				}
-
-				return json.get<float>();
-			};
-
-			config_table["getbool"] = [](const std::string& key, const variadic_args& va)
-				-> script_value
-			{
-				const auto default_value = va.size() >= 1 ? va[0] : script_value(false);
-				const auto value = config::get<nlohmann::json>(key);
-
-				if (!value.has_value())
-				{
-					return default_value;
-				}
-
-				const auto& json = value.value();
-				if (!json.is_boolean())
-				{
-					return default_value;
-				}
-
-				return json.get<bool>();
-			};
-
-			config_table["set"] = [](const std::string& key, const script_value& value)
-			{
-				config::set(key, lua_to_json(value));
-			};
-
-			auto motd_table = table();
-			lua["motd"] = motd_table;
-			motd_table["isenabled"] = motd::is_enabled;
-
-			motd_table["getnumfeaturedtabs"] = motd::get_num_featured_tabs;
-			motd_table["getmotd"] = []()
-			{
-				return json_to_lua(motd::get_motd());
-			};
-
-			motd_table["getfeaturedtab"] = [](const int index)
-			{
-				return json_to_lua(motd::get_featured_tab(index));
-			};
-
-			motd_table["hasseentoday"] = []()
-			{
-				const auto last_seen = config::get<uint64_t>("motd_last_seen");
-				if (!last_seen.has_value())
-				{
-					return false;
-				}
-
-				const auto value = static_cast<time_t>(last_seen.value());
-				const auto before = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::from_time_t(value));
-				const auto now = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
-				const auto diff = std::chrono::sys_days{now} - std::chrono::sys_days{before};
-				return diff.count() < 1;
-			};
-
-			motd_table["sethasseentoday"] = []()
-			{
-				const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-				config::set<uint64_t>("motd_last_seen", static_cast<uint64_t>(now));
-			};
-
-			motd_table["hasmotd"] = motd::has_motd;
-
-			motd_table["haswordle"] = motd::has_wordle;
-			motd_table["hassolvedwordle"] = motd::has_solved_wordle;
-			motd_table["checkwordleword"] = motd::check_worlde_word;
-			motd_table["getwordlesolution"] = motd::get_wordle_solution;
-			motd_table["getwordleid"] = motd::get_wordle_id;
-			motd_table["getwordlescore"] = motd::get_wordle_score;
-			motd_table["solvewordle"] = motd::solve_wordle;
-
-			auto achievements_table = table();
-			lua["achievements"] = achievements_table;
-
-			achievements_table["hasachievement"] = achievements::has_achievement;
-			achievements_table["getrarity"] = achievements::get_rarity;
-			achievements_table["getname"] = achievements::get_name;
-			achievements_table["getdetails"] = achievements::get_details;
-			achievements_table["getbackground"] = achievements::get_background;
-			achievements_table["issecret"] = achievements::is_secret;
-			achievements_table["count"] = achievements::get_count;
-
-			achievements_table["table"] = []()
-			{
-				table table{};
-
-				achievements::achievement_file_t file{};
-				achievements::get_achievements(&file);
-
-				for (auto i = 0; i < achievements::ACHIEVEMENT_TOTAL_COUNT; i++)
-				{
-					table[i] = file.achievements[i];
-				}
-
-				return table;
-			};
+			// MWR exposes only admitted native/VR bindings. H2 updater, mod-loader,
+			// language-restart, achievements and stats services are not installed.
 
 			table camera_table;
 			lua["camera"] = camera_table;
@@ -1019,6 +563,7 @@ namespace ui_scripting
 			// subtitle profile and on-disk mod scripts stay off (not ported).
 			load_script("lui_common", lui_common);
 			load_script("lua_json", lua_json);
+			load_script("lui_vr_height_art", lui_vr_height_art);
 			load_script("lui_vr_options", lui_vr_options);
 		}
 

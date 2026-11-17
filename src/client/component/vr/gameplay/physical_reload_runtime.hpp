@@ -59,6 +59,7 @@ namespace vr::gameplay::weapons::physical_reload
 			std::optional<hands::anchor> exit; // Ejection port frame when world is the cartridge pose.
 		};
 		bool active{}, fault{}, slide_held{}, magazine_seated{};
+		bool original_ak_attachment{}; // Pinned with this mechanical instance.
 		quick_reload::dwell quick_load{};
 		mechanics::state ammo{};
 		hold owner{};
@@ -140,6 +141,11 @@ namespace vr::gameplay::weapons::physical_reload
 	void publish_scene(const scene_frame& value) noexcept;
 	void set_boundary_ready(unsigned bit) noexcept; // fire/consume=1, reload=2, presenter=4
 	bool blocks_reload(const void* ps, int side) noexcept;
+	// vr_autoReload: every physical feed family (magazine, cylinder, tube, break
+	// action) stands down through its feature exit, so the native reload owns
+	// B/empty reloads with the stock animation. Launchers stay physical.
+	bool native_reload() noexcept;
+	bool original_ak_attachment() noexcept;
 	bool allow_fire(const void* ps, int command_time, int side) noexcept;
 	bool allow_owned_shot(const hold&,const native_ammunition::snapshot&) noexcept;
 	void consumed(const void* ps, int command_time, std::uint32_t weapon, bool alternate, int amount, int side,

@@ -7,11 +7,12 @@
 
 namespace vr::gameplay::scripted_motion
 {
-	int linked_parent() noexcept
+	int linked_parent(int entity) noexcept
 	{
+		if(entity<0 || entity>=game::ENTITYNUM_WORLD)return -1;
 		const void* tag{};
 		const game::gentity_s* parent{};
-		if (!utils::native_memory::read_bytes(&tag, reinterpret_cast<const std::byte*>(&game::g_entities[0]) + 0x208, sizeof(tag)) || !tag ||
+		if (!utils::native_memory::read_bytes(&tag, reinterpret_cast<const std::byte*>(&game::g_entities[entity]) + 0x208, sizeof(tag)) || !tag ||
 		    !utils::native_memory::read_bytes(&parent, tag, sizeof(parent)) || !parent)
 			return -1;
 		const auto address = reinterpret_cast<std::uintptr_t>(parent), base = reinterpret_cast<std::uintptr_t>(game::g_entities.get());

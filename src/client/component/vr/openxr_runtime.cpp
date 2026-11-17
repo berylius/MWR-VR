@@ -1063,12 +1063,7 @@ namespace vr::openxr
 				return true;
 			if (!eye.waited)
 			{
-				const XrSwapchainImageWaitInfo wait_info{
-				    XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, nullptr, 10'000'000};
-				result = dispatch_.wait_swapchain_image(eye.handle, &wait_info);
-				if (XR_FAILED(result) || result == XR_TIMEOUT_EXPIRED)
-					return false;
-				eye.waited = true;
+				if (!wait_acquired_image(dispatch_, eye, result)) return false;
 			}
 			return release_acquired_image(dispatch_, eye, result);
 		}
@@ -1741,23 +1736,23 @@ namespace vr::openxr
 		                XrResult& result,
 		                std::string& error)
 		{
-			const XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-			result = dispatch_.acquire_swapchain_image(eye.handle, &acquire, &eye.acquired_index);
-			if (XR_FAILED(result))
+			if (!eye.acquired)
 			{
-				error = "xrAcquireSwapchainImage";
-				return false;
+				const XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+				result = dispatch_.acquire_swapchain_image(eye.handle, &acquire, &eye.acquired_index);
+				if (XR_FAILED(result))
+				{
+					error = "xrAcquireSwapchainImage";
+					return false;
+				}
+				eye.acquired = true;
+				++status_.eyes[index].acquired;
 			}
-			eye.acquired = true;
-			++status_.eyes[index].acquired;
-			const XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, nullptr, 10'000'000};
-			result = dispatch_.wait_swapchain_image(eye.handle, &wait);
-			if (XR_FAILED(result) || result == XR_TIMEOUT_EXPIRED)
+			if (!wait_acquired_image(dispatch_, eye, result))
 			{
 				error = "xrWaitSwapchainImage";
 				return false;
 			}
-			eye.waited = true;
 			if (eye.acquired_index >= eye.render_targets.size())
 			{
 				result = XR_ERROR_RUNTIME_FAILURE;
@@ -1818,6 +1813,15 @@ namespace vr::openxr
 		}
 		bool frame_failure(const char* operation, XrResult result)
 		{
+			if (result == XR_TIMEOUT_EXPIRED)
+			{
+				// No partial stereo/menu family is submitted. Keep the image lease,
+				// retire this prediction, and copy a complete fresh pair on retry.
+				status_.last_compositor_error = "OpenXR image wait deferred; retaining acquired image";
+				++status_.swapchain_wait_deferrals;
+				prediction_.menu_layers_ready = false;
+				return finish_prediction(world_submission::omit);
+			}
 			// Cleanup can itself fail. Preserve the initiating operation before
 			// settling images/ending the frame, then restore its current error below.
 			status_.failures.record(GetTickCount64(),status_.session_generation,status_.frame_context_id,result,

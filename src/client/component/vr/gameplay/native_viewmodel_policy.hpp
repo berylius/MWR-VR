@@ -12,9 +12,9 @@ namespace vr::gameplay::hands
 	// owner, tracking or a cinematic permission is temporarily unavailable.
 	inline bool suppress_legacy_viewmodel(bool vr_requested,bool replacing_all,bool personal_firearm) noexcept
 	{return vr_requested && (replacing_all || personal_firearm);}
-	// A driver hands-only DObj has no firearm owner. Carry intentionally retains
-	// the pre-boarding hold for exit; that suspended hold must not reject this rig.
+	// Driver/turret hands-only DObjs have no firearm owner. Carry retains the
+	// pre-boarding hold for exit; that suspended hold must not reject these rigs.
 	// Actual weapon DObjs and ordinary on-foot handoffs keep their ownership checks.
-	inline weapons::hold model_pose_owner(weapons::hold retained,bool hands_only,bool driver_hands) noexcept
-	{return hands_only && driver_hands?weapons::hold{}:retained;}
+	inline weapons::hold model_pose_owner(weapons::hold retained,bool hands_only,bool anchored_hands) noexcept
+	{return hands_only && anchored_hands?weapons::hold{}:retained;}
 }

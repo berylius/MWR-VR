@@ -5,6 +5,7 @@
 #include "native_scripted_control.hpp"
 #include "cylinder_runtime.hpp"
 #include "quick_reload_runtime.hpp"
+#include "physical_reload_runtime.hpp"
 #include "reload_item_runtime.hpp"
 #include "reload_item_compatibility.hpp"
 #include "cylinder_presenter.hpp"
@@ -46,7 +47,7 @@ namespace vr::gameplay::weapons::cylinder
 		const char* reason{"waiting for cylinder presentation contract"};
 		instance* find(weapon_identity id) noexcept
 		{ for (auto& i : inventory) if (i.view.active && i.view.owner.id() == id) return &i; return nullptr; }
-		bool active() noexcept { return alive.load() && boundaries.load()==7 && enabled && enabled->current.enabled; }
+		bool active() noexcept { return alive.load() && boundaries.load()==7 && enabled && enabled->current.enabled && !physical_reload::native_reload(); }
 		bool commit(instance& i, const transaction& tx, bool direct_load=false)
 		{
 			reload_items::key released;

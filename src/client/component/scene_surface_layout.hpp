@@ -7,8 +7,8 @@
 namespace scene_surface_storage
 {
 	// NECESSARY FORMAT CHANGE, not spare cache memory:
-	// Two coordinated airport captures hit 313592 / 301376 bytes against the
-	// native 262144-byte arena, with 780 / 855 owned model packing failures.
+	// MWR War Pig exterior gameplay exceeded the native 262144-byte arena,
+	// producing over 16000 runtime replacement model packing failures.
 	// The uint16 surfId is a scaled BYTE OFFSET, not a surface ordinal. Raising
 	// only the byte limit wraps IDs and renders unrelated memory as geometry.
 	// Capacity, index units, hidden-record stride, brush-prefix padding and ALL
@@ -16,15 +16,15 @@ namespace scene_surface_storage
 	// See docs/scene-surface-storage.md before profiling, refactoring or rollback.
 	inline constexpr std::size_t index_unit=8;
 	inline constexpr std::size_t capacity=(std::size_t{1}<<16)*index_unit;
-	// MWR skin packets (0x1405351E0): hidden 4 bytes, rigid bones*32+56,
-	// skinned 56 (H2: 8 / bones*32+64 / 56).
-	inline constexpr std::size_t hidden_bytes=4;
+	// MWR 0x1405351E0: native hidden packets are 4 bytes. The complete H1
+	// contract pads them to 8; rigid bones*32+56 and skinned 56 stay unchanged.
+	inline constexpr std::size_t hidden_bytes=8;
 	inline constexpr std::size_t skinned_bytes=56;
 	inline constexpr std::size_t brush_prefix_bytes=32;
 	inline constexpr std::size_t brush_surface_bytes=24;
-	inline constexpr std::uint32_t native_arena_offset=0x62b700;
-	inline constexpr std::uintptr_t native_first_frontend=0x14ef1eb80;
-	inline constexpr std::size_t native_frontend_stride=0x1039300;
+	inline constexpr std::uint32_t native_arena_offset=0x62b480;
+	inline constexpr std::uintptr_t native_first_frontend=0x14f877580;
+	inline constexpr std::size_t native_frontend_stride=0xfd9880;
 
 	// Instruction operands can contain arena+field, not just arena. The initial
 	// literal-only relocation left +0x08/+0x28 readers on the old arena and

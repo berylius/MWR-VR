@@ -30,6 +30,7 @@ namespace vr::gameplay::hand_interaction
 	void offer(candidate c)noexcept
 	{
 		if(!server() || !active || !vr::valid_hand(c.actor) || !(context.valid_hands&(1u<<unsigned(c.actor))))return;
+		if(c.desired.maintained==button::grip && (context.blocked_acquisitions&(1u<<unsigned(c.actor))))return;
 		if(c.desired.destination.provider!=domain::world && history.get(c.actor,c.desired.maintained).release)return;
 		authority.offer(c);
 	}

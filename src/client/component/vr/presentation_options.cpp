@@ -22,9 +22,14 @@ namespace vr::presentation_options
 			static_assert(std::atomic_bool::is_always_lock_free && sizeof(hide_hud)==1);
 			// All native cg_drawHUD readers, including Game.IsHudEnabled and the
 			// ownerdraw fallback. cg_draw2D and LUI/menu rendering stay untouched.
-			constexpr std::uintptr_t native=0x141E39EA0;
-			constexpr std::array<std::uintptr_t,8> sites{0x140367A2A,0x140367A69,0x140367B03,0x140367B51,
-				0x140367BCF,0x140368815,0x140368975,0x14038AD7E};
+			// MWR: cg_drawHUD (hash 0x471FC2A9, registered at 0x14015C8DB) is stored
+			// at 0x1423645F8 (H2 0x141E39EA0); its eight `mov rax,[cg_drawHUD];
+			// cmp byte [rax+10h],0` readers map 1:1 to the H2 sites
+			// (H2 0x140367A2A,0x140367A69,0x140367B03,0x140367B51,0x140367BCF,
+			// 0x140368815,0x140368975,0x14038AD7E).
+			constexpr std::uintptr_t native=0x1423645F8;
+			constexpr std::array<std::uintptr_t,8> sites{0x1401449CA,0x140144A09,0x140144AC3,0x140144B11,
+				0x140144B8F,0x1401459D5,0x140145B3D,0x140165F5E};
 			std::array<void*,sites.size()> relays{};
 			for(unsigned i=0;i<sites.size();++i)
 			{

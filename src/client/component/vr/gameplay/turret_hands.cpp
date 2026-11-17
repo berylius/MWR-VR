@@ -43,12 +43,11 @@ namespace vr::gameplay::turret_hands
 		// off the separate tag_dummy/tag_aim chain. Grip fitted by eye in the mock
 		// on both spade grips at 6 and 20 degrees of depression.
 		struct anchor_profile {std::string_view model, tag;vec grip;};
-		// airlift: the Seaknight's door Mk19 is part of the helicopter model; its
-		// tag_barrel faces the gun forward and parents the rear trigger between the
-		// spade grips (handlele/handleri are the charging handles on the bolt).
-		constexpr std::array<anchor_profile, 2> anchors{{
+		// airlift's vehicle_ch46e_opened_door_interior_mk19 already has native
+		// grip hands. Do not add independent VR arms to that moving mount: the
+		// empty-hand submission falls back to its native viewmodel instead.
+		constexpr std::array<anchor_profile, 1> anchors{{
 			{"weapon_minigun", "tag_aim_animated", {-14.3f, 3.2f, -.2f}},
-			{"vehicle_ch46e_opened_door_interior_mk19", "tag_barrel", {-20.f, 4.5f, 4.f}},
 		}};
 		struct tag_cache {const void* models{};unsigned count{};std::uint32_t tag{};vec grip{};} cache;
 		game::dvar_t* enabled{};

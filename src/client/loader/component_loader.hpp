@@ -1,5 +1,6 @@
 #pragma once
 #include "component_interface.hpp"
+#include "mwr_port.hpp"
 
 class component_loader final
 {
@@ -12,7 +13,7 @@ public:
 		}
 	};
 
-	template <typename T>
+	template <typename T, bool enabled = true>
 	class installer final
 	{
 		static_assert(std::is_base_of<component_interface, T>::value, "component has invalid base class");
@@ -20,7 +21,8 @@ public:
 	public:
 		installer()
 		{
-			register_component(std::make_unique<T>());
+			// Reject legacy components before their constructors/static owners run.
+			if constexpr (enabled) register_component(std::make_unique<T>());
 		}
 	};
 
@@ -54,8 +56,10 @@ private:
 	static std::vector<std::unique_ptr<component_interface>>& get_components();
 };
 
+#define MWR_COMPONENT_JOIN_IMPL(a, b) a##b
+#define MWR_COMPONENT_JOIN(a, b) MWR_COMPONENT_JOIN_IMPL(a, b)
 #define REGISTER_COMPONENT(name)                          \
 namespace                                                 \
 {                                                         \
-	static component_loader::installer<name> __component; \
+	static component_loader::installer<name, mwr_port::is_enabled(#name)> MWR_COMPONENT_JOIN(__component_, __COUNTER__); \
 }

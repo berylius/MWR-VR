@@ -79,7 +79,12 @@ namespace vr::controllers
 		game::dvar_t* auto_ads{};
 		game::dvar_t* turret_hand_aim{};
 		gameplay::mounted_hand_aim::state turret_hands; // Command thread (FinishMove).
+		std::array<std::atomic<float>,3> turret_neutral{},turret_hand_offset{};
 		game::dvar_t* physical_stance_dvar{};
+		game::dvar_t* room_walk{}; // vr_roomscaleWalk
+		constexpr float room_walk_start = 0.05f; // Metres of head-body gap before the body steps.
+		constexpr float room_walk_speed = 190.f; // Units/s at a full stick (MWR run speed).
+		std::atomic<std::uint64_t> room_walk_commands{};
 		gameplay::physical_stance::tracker physical_posture; // Command thread.
 		gameplay::weapons::ads_policy ads;
 		std::array<controller_input::digital_press_gate,2> attack_notifications{};
@@ -251,8 +256,16 @@ namespace vr::controllers
 							// handles and the arms swing it about its pintle (user request).
 							std::array<float, 2> aim{};
 							const float pitch = angles[0];
-							if (!turret_hands.update(controller_input::latest_interaction(), true, aim) ||
+							std::uint16_t turret_entity{};
+							std::memcpy(&turret_entity,reinterpret_cast<const std::byte*>(ps)+0x1e,sizeof(turret_entity));
+							if (!turret_hands.update(controller_input::latest_interaction(), true, aim,
+								std::uint64_t(turret_entity)+1) ||
 								!head_pose_bridge::apply_game_view_local(angles, ps->delta_angles, aim[0], aim[1])) return false;
+							for(unsigned i=0;i<3;++i)
+							{
+								turret_neutral[i]=turret_hands.neutral_center()[i];
+								turret_hand_offset[i]=turret_hands.hand_offset()[i];
+							}
 							angles[0] = turret_hands.pitch_step(pitch, aim[0]);
 							return true;
 						}())
@@ -438,6 +451,14 @@ namespace vr::controllers
 				gunship_cycle_presses = cycle;
 			}
 			else gunship_cycle_presses = input.primary[dominant].presses + input.secondary[support].presses;
+			// vr_autoReload: B is the reload itself, so it also carries the +reload
+			// notification that physical insertion delivers above (script hints).
+			if (reload_binding_verified && weapon_gameplay && !gameplay::view_aimed::gunship() &&
+				gameplay::weapons::physical_reload::native_reload() && input.secondary[dominant].presses != gunship_reload_presses)
+			{
+				utils::hook::invoke<void>(notify_command_address, building_client, reload_binding, 0);
+				++reload_notify_count;
+			}
 			gunship_reload_presses = input.secondary[dominant].presses;
 			if (gameplay && input.secondary[dominant].active && input.secondary[dominant].down)
 			{
@@ -452,6 +473,36 @@ namespace vr::controllers
 			// Gunship: no movement. Turret: the left stick still drives the native
 			// forward/back (Barrett zoom); turning belongs to the aiming stick.
 			if (!gameplay::view_aimed::gunship() && !sniper) apply_locomotion(cmd, input, gameplay, now);
+			// Room-scale walking (GitHub MWR-VR #7): walking for real moves the body
+			// under the head, so doorways and walls meet the view. Only while the stick
+			// rests (the stick already moves body and view together); the camera takes
+			// the travelled part out of the tracking frame (head_pose_bridge).
+			{
+				std::array<float,2> follow{};
+				const auto* walk_ps = game::CG_GetPredictedPlayerState(0);
+				const bool walk_allowed = gameplay && !climbing && !sniper && room_walk && room_walk->current.enabled &&
+					!gameplay::view_aimed::gunship() && !gameplay::view_aimed::mounted() && walk_ps &&
+					!(walk_ps->pm_flags & (game::PMF_MANTLE | game::PMF_LADDER)) &&
+					cmd->forwardmove == 0 && cmd->rightmove == 0 && head_pose_bridge::roomscale_follow_target(follow);
+				const auto head = head_pose_bridge::get_status();
+				const float distance = std::hypot(follow[0], follow[1]);
+				const float dead_zone = room_walk_start * head.world_scale;
+				if (walk_allowed && std::isfinite(distance) && distance > dead_zone && head.world_scale > 0.f)
+				{
+					// Close the gap within about a tenth of a second, at most the run speed.
+					const float speed = std::min(distance / 0.1f, room_walk_speed);
+					const float scale = speed / room_walk_speed * 127.f / distance;
+					const float yaw = walk_ps->viewangles[1] * 0.017453292519943295f;
+					const float c = std::cos(yaw), s = std::sin(yaw);
+					const float forward = (follow[0] * c + follow[1] * s) * scale;
+					const float right = (follow[0] * s - follow[1] * c) * scale;
+					cmd->forwardmove = static_cast<char>(std::clamp(static_cast<int>(std::lround(forward)), -127, 127));
+					cmd->rightmove = static_cast<char>(std::clamp(static_cast<int>(std::lround(right)), -127, 127));
+					head_pose_bridge::roomscale_follow_commanded(follow);
+					++room_walk_commands;
+				}
+				else head_pose_bridge::roomscale_follow_commanded({});
+			}
 			if (climbing) cmd->forwardmove = cmd->rightmove = 0; // Turning stays available.
 			if (gameplay && gameplay::view_aimed::mounted() && !sniper) // The sniper grips drag its aim.
 			{
@@ -636,8 +687,18 @@ namespace vr::controllers
 				"sprint_commands=%llu jump_commands=%llu jump_notifies=%llu\n",
 				input.sprint.active, input.sprint.presses, input.jump.active, input.jump.presses,
 				sprint_count.load(), jump_count.load(), jump_notify_count.load());
+			{
+				std::array<float,2> follow{};
+				const bool fresh = head_pose_bridge::roomscale_follow_target(follow);
+				console::info("[VR input] roomscale_walk=%d commands=%llu target_fresh=%d target=(%.2f,%.2f) offset_m=(%.3f,%.3f)\n",
+					room_walk && room_walk->current.enabled, room_walk_commands.load(), fresh, follow[0], follow[1],
+					head.roomscale_offset_meters[0], head.roomscale_offset_meters[1]);
+			}
 			console::info("[VR input] attack_commands=%llu reload_commands=%llu weapon_hand=%d\n",
 				attack_count.load(), reload_count.load(), gameplay::mwr_weapon_pose::active());
+			console::info("[VR input] mounted_neutral_m=(%.3f,%.3f,%.3f) hand_offset_m=(%.3f,%.3f,%.3f)\n",
+				turret_neutral[0].load(),turret_neutral[1].load(),turret_neutral[2].load(),
+				turret_hand_offset[0].load(),turret_hand_offset[1].load(),turret_hand_offset[2].load());
 			console::info("[VR input] auto_ads=%d ads_verified=%d ads_requested=%d ads_commands=%llu "
 				"binding_verified=%d attack_notifies=%llu ads_notifies=%llu reload_notifies=%llu\n",
 				auto_ads && auto_ads->current.enabled,ads_verified,ads_requested.load(),ads_command_count.load(),
@@ -689,6 +750,8 @@ namespace vr::controllers
 				"Request native ADS while a supported physical weapon is raised to the sights");
 			turret_hand_aim=dvars::register_bool("vr_turretHandAim",true,game::DVAR_FLAG_SAVED,
 				"Mounted and vehicle guns: the hands hold the handles and the arms swing the gun");
+			room_walk=dvars::register_bool("vr_roomscaleWalk",true,game::DVAR_FLAG_SAVED,
+				"Walking for real moves the body under the head (doorways and walls meet the view)");
 			physical_stance_dvar=dvars::register_bool("vr_physicalStance",true,game::DVAR_FLAG_SAVED,
 				"Crouching or lying down for real selects the native crouch/prone stance");
 			// MWR CL_KeyMove sets/clears usercmd bit 11 before FinishMove.

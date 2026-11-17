@@ -1,5 +1,6 @@
 #include <std_include.hpp>
 #include "settings.hpp"
+#include "first_person_size.hpp"
 
 #include "loader/component_loader.hpp"
 
@@ -31,7 +32,6 @@
 #include "component/command.hpp"
 #include "component/console.hpp"
 #include "component/d3d11.hpp"
-#include "component/gui/gui.hpp"
 #include "component/scheduler.hpp"
 #include "game/dvars.hpp"
 #include "loader/target_identity.hpp"
@@ -57,6 +57,7 @@ namespace vr
 		game::dvar_t* vr_engine_probe_trace{};
 		game::dvar_t* vr_head_tracking{};
 		game::dvar_t* vr_world_scale{};
+		game::dvar_t* vr_first_person_scale{};
 		game::dvar_t* vr_engine_swap_eyes{};
 		game::dvar_t* vr_desktop_fov{};
 
@@ -219,15 +220,6 @@ namespace vr
 			}
 		}
 
-		void on_gui_frame()
-		{
-			if (is_accepting_work())
-			{
-				diagnostics::record_gui_frame();
-				if (vr_enable && vr_enable->current.enabled && vr_desktop_fov)
-					desktop_mirror::draw(vr_desktop_fov->current.value);
-			}
-		}
 
 		void monitor_present_progress()
 		{
@@ -755,6 +747,8 @@ namespace vr
 				engine_stereo_bridge::set_world_scale(vr_world_scale->current.value);
 				head_pose_bridge::set_world_scale(vr_world_scale->current.value);
 			}
+			if(vr_first_person_scale)
+				first_person_size::requested.store(vr_first_person_scale->current.value,std::memory_order_relaxed);
 			engine_stereo_bridge::set_swap_eyes(vr_engine_swap_eyes != nullptr &&
 				vr_engine_swap_eyes->current.enabled);
 
@@ -841,6 +835,9 @@ namespace vr
 			vr_world_scale = dvars::register_float("vr_worldScale", 39.3700787f,
 				0.01f, 10000.0f, game::DVAR_FLAG_SAVED,
 				"Game units per VR meter for head tracking and stereo; apply with vr_reinit");
+			vr_first_person_scale=dvars::register_float(settings::first_person_scale.name,
+				settings::first_person_scale.default_value,settings::first_person_scale.min,
+				settings::first_person_scale.max,game::DVAR_FLAG_SAVED,"First-person geometry size; restart to apply");
 			vr_engine_swap_eyes = dvars::register_bool("vr_engineSwapEyes", false, game::DVAR_FLAG_SAVED,
 				"Swap the engine stereo left and right eye assignment; apply with vr_reinit");
 			vr_desktop_fov = dvars::register_float("vr_desktopFov", desktop_mirror::default_horizontal_fov,
@@ -861,7 +858,6 @@ namespace vr
 
 			scheduler::loop(on_renderer_frame, scheduler::pipeline::renderer);
 			scheduler::loop(monitor_present_progress, scheduler::pipeline::async, 250ms);
-			gui::on_frame(on_gui_frame, true);
 			command::add("vr_status", print_status);
 			diagnostics::support::start([]{return vr_enable&&vr_enable->current.enabled;});
 			command::add("vr_diagnose", diagnostics::support::request);

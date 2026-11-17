@@ -274,6 +274,18 @@ namespace vr::hud_prompts
 		native_rule{source::script_hud,"KILLHOUSE_HINT_FLASH",key::trainer_flash,"killhouse",feature::carry},
 		native_rule{source::script_hud,"PLATFORM_HINT_CROUCH_TOGGLE_PC",key::trainer_crouch,"killhouse",feature::carry},
 		native_rule{source::script_hud,"PLATFORM_HINT_HOLD_CROUCH",key::trainer_crouch,"killhouse",feature::carry},
+		// COD4 cargoship (MWR, maps/cargoship_code keyhints): crouch/stand under
+		// the bridge, frag in the hold, jump to the helicopter at the exit.
+		native_rule{source::script_hud,"CARGOSHIP_HINT_CROUCH",key::trainer_crouch,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_HINT_CROUCH_STANCE",key::trainer_crouch,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_HINT_CROUCH_TOGGLE",key::trainer_crouch,"cargoship",feature::carry},
+		native_rule{source::script_hud,"PLATFORM_HINT_HOLD_CROUCH_COVER",key::trainer_crouch,"cargoship",feature::carry},
+		native_rule{source::script_hud,"PLATFORM_HINT_CROUCH_TOGGLE_COVER_PC",key::trainer_crouch,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_HINT_STAND",key::trainer_stand,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_HINT_STAND_STANCE",key::trainer_stand,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_HINT_FRAG",key::trainer_frag,"cargoship",feature::carry},
+		native_rule{source::script_hud,"CARGOSHIP_MANTLE",key::trainer_jump,"cargoship",feature::carry},
+		native_rule{source::world,"CARGOSHIP_MANTLE",key::trainer_jump,"cargoship",feature::carry},
 		native_rule{source::script_hud,"SCRIPT_LEARN_GRENADE_LAUNCHER",key::m203_reload,"roadkill",feature::m203},
 		native_rule{source::lui,"PLATFORM_HOLD_TO_SKIP",key::cinematic_skip,{}},
 		native_rule{source::lui,"PLATFORM_HOLD_TO_SKIP_KEYBOARD",key::cinematic_skip,{}},

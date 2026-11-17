@@ -11,22 +11,23 @@ int main()
 	fs::remove_all(g);
 	write(g / "overlord-mwr/dxvk/d3d11.dll", "DXVK-D3D11");
 	write(g / "overlord-mwr/dxvk/dxgi.dll", "DXVK-DXGI");
-	launcher_dxvk::sync(g, false);                    // off, nothing installed
+	launcher_dxvk::sync(g, true);                     // on: bundle only, game folder untouched
 	assert(!fs::exists(g / "d3d11.dll") && !fs::exists(g / "dxgi.dll"));
-	launcher_dxvk::sync(g, true);                     // install
-	assert(fs::exists(g / "d3d11.dll") && fs::exists(g / "dxgi.dll"));
-	launcher_dxvk::sync(g, true);                     // idempotent
-	launcher_dxvk::sync(g, false);                    // remove ours
+	write(g / "d3d11.dll", "DXVK-D3D11");             // copies from an older build
+	write(g / "dxgi.dll", "DXVK-DXGI");
+	launcher_dxvk::sync(g, true);                     // removed even when on
 	assert(!fs::exists(g / "d3d11.dll") && !fs::exists(g / "dxgi.dll"));
+	write(g / "d3d11.dll", "DXVK-D3D11");
+	launcher_dxvk::sync(g, false);                    // and when off
+	assert(!fs::exists(g / "d3d11.dll"));
 	write(g / "dxgi.dll", "RESHADE");                 // foreign wrapper
-	assert(throws(g, true));                          // refuse to overwrite
-	assert(!fs::exists(g / "dxgi.dll.mwrvr-partial"));
-	assert(!fs::exists(g / "d3d11.dll"));             // no half-installed pair
+	launcher_dxvk::sync(g, true);
 	launcher_dxvk::sync(g, false);                    // never delete foreign
 	{ std::ifstream f(g / "dxgi.dll"); std::string s; f >> s; assert(s == "RESHADE"); }
 	fs::remove(g / "dxgi.dll");
 	fs::remove_all(g / "overlord-mwr");
 	assert(throws(g, true));                          // bundle missing
+	assert(!throws(g, false));
 	fs::remove_all(g);
 	std::cout << "DXVK_SYNC_OK\n";
 }

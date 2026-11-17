@@ -23,9 +23,9 @@ namespace vr::settings
 	struct choice_setting
 	{
 		const char* name;
-		std::array<const char*, 5> values; // Null terminated for native enum registration.
+		std::array<const char*, 8> values; // Seven tracer presets plus the native enum terminator.
 		int default_index{};
-		std::array<const char*, 5> label_keys{}; // Launcher localization keys, paired with values.
+		std::array<const char*, 8> label_keys{}; // Launcher localization keys, paired with values.
 	};
 	inline constexpr choice_setting killfeed_style{
 		.name = "vr_killfeedStyle",
@@ -53,9 +53,16 @@ namespace vr::settings
 		.default_index = 0,
 		.label_keys = {"choice.standardControllerPose", "choice.legacyControllerPose"}};
 	inline constexpr choice_setting control_hand{.name="vr_controlHand",.values={"right","left"},.label_keys={"choice.rightHand","choice.leftHand"}};
+	inline constexpr choice_setting weapon_grip_mode{.name="vr_weaponGripMode",.values={"hold","toggle"},.label_keys={"choice.gripHold","choice.gripToggle"}};
 	inline constexpr choice_setting pistol_holster_side{.name="vr_pistolHolsterSide",.values={"right","left"},.label_keys={"choice.rightSide","choice.leftSide"}};
+	inline constexpr choice_setting tracer_style{
+		.name = "vr_tracerStyle",
+		.values = {"native", "blaze", "cerulean", "royal", "anime", "independence_1776", "rainbow"},
+		.label_keys = {"choice.tracerNative", "choice.tracerBlaze", "choice.tracerCerulean", "choice.tracerRoyal",
+			"choice.tracerAnime", "choice.tracer1776", "choice.tracerRainbow"}};
 	inline constexpr std::array choices{
-	    control_hand,pistol_holster_side,
+		tracer_style,
+	    control_hand,pistol_holster_side,weapon_grip_mode,
 		runtime_backend, controller_pose_mode, killfeed_style,
 	    choice_setting{
 	        .name = turn_mode, .values = {"smooth", "snap"}, .label_keys = {"choice.smooth", "choice.snap"}},
@@ -108,6 +115,9 @@ namespace vr::settings
 	inline constexpr boolean_setting recording_mode{"vr_recordingMode", false};
 	inline constexpr number_setting recording_dim{"vr_recordingDim", 65.f, 0.f, 100.f, 1.f};
 	inline constexpr boolean_setting quick_reload{"vr_quickReload", true};
+	// MWR: native reload (B / empty magazine) with the stock animation instead of physical feeds.
+	inline constexpr boolean_setting auto_reload{"vr_autoReload", false};
+	inline constexpr boolean_setting original_ak_attachment{"vr_originalAKMagazine", false};
 	inline constexpr boolean_setting chambering_guide{"vr_chamberingGuide", true}; // MWR: on by default
 	inline constexpr boolean_setting physical_ladders{"vr_physicalLadders", true};
 	inline constexpr boolean_setting ammo_counter{"vr_ammoCounter", true};
@@ -130,10 +140,20 @@ namespace vr::settings
 	inline constexpr boolean_setting half_rate{"vr_halfRate", false};
 	// MWR: Vulkan renderer through DXVK (launcher/dxvk_install.cpp, openxr_vulkan.cpp); AMD driver workaround.
 	inline constexpr boolean_setting dxvk{"vr_dxvk", false};
+	inline constexpr std::array hand_angles_independent{
+		boolean_setting{"vr_standardHandAnglesIndependent", false},
+		boolean_setting{"vr_handAnglesIndependent", false}};
+	inline constexpr std::array hand_angles_initialized{
+		boolean_setting{"vr_standardHandAnglesInitialized", false},
+		boolean_setting{"vr_handAnglesInitialized", false}};
 	inline constexpr auto toggles = []
 	{
 		constexpr std::array gameplay{recording_mode,
+		                              hand_angles_independent[0], hand_angles_independent[1],
+		                              hand_angles_initialized[0], hand_angles_initialized[1],
 		                              quick_reload,
+		                              auto_reload,
+	                              original_ak_attachment,
 		                              chambering_guide,
 		                              physical_ladders,
 		                              ammo_counter,
@@ -168,6 +188,7 @@ namespace vr::settings
 	inline constexpr number_setting snap_angle{"vr_snapAngle", 30.f, 5.f, 90.f, 5.f};
 	// Player height in cm (player_height.hpp); 175 keeps the authored body layout.
 	inline constexpr number_setting player_height{"vr_playerHeight", 175.f, 120.f, 220.f, 1.f};
+	inline constexpr number_setting first_person_scale{"vr_firstPersonScale", 1.f, .2f, 1.f, .01f, .01f};
 	inline constexpr number_setting aim_assist_strength{"vr_aimAssistStrength", 0.f, 0.f, 100.f, 1.f};
 	inline constexpr number_setting enemy_melee_damage{"vr_enemyMeleeDamageScale", .5f, .1f, 2.f, .1f};
 	inline constexpr number_setting grenade_throw_speed{
@@ -216,12 +237,31 @@ namespace vr::settings
 		number_setting{"vr_standardHandAnglePitch", 0.f, -180.f, 180.f, 1.f},
 		number_setting{"vr_standardHandAngleYaw", 0.f, -180.f, 180.f, 1.f},
 		number_setting{"vr_standardHandAngleRoll", 0.f, -180.f, 180.f, 1.f}};
+	inline constexpr std::array independent_hand_angles{
+		std::array{number_setting{"vr_leftHandAnglePitch", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_leftHandAngleYaw", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_leftHandAngleRoll", 0.f, -180.f, 180.f, 1.f}},
+		std::array{number_setting{"vr_rightHandAnglePitch", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_rightHandAngleYaw", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_rightHandAngleRoll", 0.f, -180.f, 180.f, 1.f}}};
+	inline constexpr std::array standard_independent_hand_angles{
+		std::array{number_setting{"vr_standardLeftHandAnglePitch", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_standardLeftHandAngleYaw", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_standardLeftHandAngleRoll", 0.f, -180.f, 180.f, 1.f}},
+		std::array{number_setting{"vr_standardRightHandAnglePitch", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_standardRightHandAngleYaw", 0.f, -180.f, 180.f, 1.f},
+			number_setting{"vr_standardRightHandAngleRoll", 0.f, -180.f, 180.f, 1.f}}};
 	inline const auto& active_hand_alignment() noexcept
 	{
 		return controller_pose_pipeline::selected() == controller_pose_pipeline::mode::standard
 			? standard_hand_alignment : hand_alignment;
 	}
 	inline constexpr std::array numbers{turn_speed,
+		first_person_scale,
+		independent_hand_angles[0][0], independent_hand_angles[0][1], independent_hand_angles[0][2],
+		independent_hand_angles[1][0], independent_hand_angles[1][1], independent_hand_angles[1][2],
+		standard_independent_hand_angles[0][0], standard_independent_hand_angles[0][1], standard_independent_hand_angles[0][2],
+		standard_independent_hand_angles[1][0], standard_independent_hand_angles[1][1], standard_independent_hand_angles[1][2],
 										standard_hand_alignment[0], standard_hand_alignment[1],
 										standard_hand_alignment[2], standard_hand_alignment[3],
 										standard_hand_alignment[4], standard_hand_alignment[5],

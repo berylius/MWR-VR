@@ -306,6 +306,7 @@ namespace vr::diagnostics::detail
 		output << " effective=" << scene_mode_name(runtime_status.effective_scene_mode) << '\n';
 		output << "  compositor: prepare=" << runtime_status.compositor_prepare_count;
 		output << " render=" << runtime_status.compositor_render_count;
+		output << " wait_deferrals=" << runtime_status.swapchain_wait_deferrals;
 		output << " source_misses=" << runtime_status.compositor_source_miss_count << '\n';
 		output << "  compositor_error=" << available(runtime_status.last_compositor_error) << '\n';
 		if (runtime_status.backend_name == "openvr")

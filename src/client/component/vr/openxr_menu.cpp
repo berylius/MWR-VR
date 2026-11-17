@@ -1,4 +1,6 @@
 #include <std_include.hpp>
+#include "ui_texture_limits.hpp"
+static_assert(vr::ui_texture_limits::maximum_dimension == D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION);
 #include "openxr_menu.hpp"
 #include "spatial_math.hpp"
 #include "movie_presentation.hpp"
@@ -53,8 +55,8 @@ namespace vr::openxr
 		}
 		D3D11_TEXTURE2D_DESC description{};
 		source->GetDesc(&description);
-		if (!description.Width || !description.Height || description.Width > 8192 ||
-		    description.Height > 8192 || description.MipLevels != 1 || description.ArraySize != 1 ||
+		if (!ui_texture_limits::valid_extent(description.Width, description.Height) ||
+		    description.MipLevels != 1 || description.ArraySize != 1 ||
 		    description.SampleDesc.Count != 1)
 		{
 			error = "native video descriptor is unsupported";
@@ -271,18 +273,17 @@ namespace vr::openxr
 				target.format = format;
 			}
 			auto& swap = target.swapchain;
-			const XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-			operation = "xrAcquireSwapchainImage";
-			result = xr.acquire_swapchain_image(swap.handle, &acquire, &swap.acquired_index);
-			if (XR_FAILED(result))
-				return failure();
-			swap.acquired = true;
-			const XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, nullptr, 10'000'000};
+			if (!swap.acquired)
+			{
+				const XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+				operation = "xrAcquireSwapchainImage";
+				result = xr.acquire_swapchain_image(swap.handle, &acquire, &swap.acquired_index);
+				if (XR_FAILED(result)) return failure();
+				swap.acquired = true;
+			}
 			operation = "xrWaitSwapchainImage";
-			result = xr.wait_swapchain_image(swap.handle, &wait);
-			if (XR_FAILED(result) || result == XR_TIMEOUT_EXPIRED)
+			if (!wait_acquired_image(xr, swap, result))
 				return failure();
-			swap.waited = true;
 			if (swap.acquired_index >= swap.render_targets.size())
 			{
 				result = XR_ERROR_RUNTIME_FAILURE;

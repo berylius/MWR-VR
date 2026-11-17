@@ -180,18 +180,26 @@ namespace vr::gameplay::weapons::native_carry
 				duplicate_pickup_admitted(acquiring.key,ps,automatic,dual,carry::pickup_context::grip_transfer)) return 1;
 			return utils::hook::invoke<int>(0x1404907B0,item,ps,automatic,dual);
 		}
-		bool blocked_touch(game::gentity_s* item,game::gentity_s* actor)
+		bool player_dropped(const game::gentity_s* item) noexcept
+		{
+			const auto key=entity_key(number(item));
+			for (const auto& r:dropped) if (r.id && r.key==key) return true;
+			return false;
+		}
+		bool blocked_touch(game::gentity_s* item,game::gentity_s* actor,bool automatic=false)
 		{
 			if (!carry::active() || actor!=&game::g_entities[0] || !item) return false;
 			const auto token=read<std::uint32_t>(item,0x80);
 			const bool admitted=acquiring.weapon==token && acquiring.key==entity_key(number(item));
 			const bool firearm=read<std::uint8_t>(item,0)==2 && (token&511u) &&
 				vr::h2::sp::weapon_inventory_type(token,false)==0;
-			return carry::suppress_weapon_touch(true,true,firearm,admitted);
+			return carry::suppress_weapon_touch(true,true,firearm,admitted,automatic,firearm && automatic && player_dropped(item));
 		}
 		void pickup_stub(game::gentity_s* item,game::gentity_s* actor,int automatic)
 		{
-			if (blocked_touch(item,actor)) return;
+			// Touch_Item (0x14029F6A0) sends automatic touches to 0x1402A0C00,
+			// which only scavenges stock from an owned/ammo-sharing weapon.
+			if (blocked_touch(item,actor,automatic!=0)) return;
 			pickup_hook.invoke<void>(item,actor,automatic);
 		}
 		bool scavenge_stub(game::gentity_s* item,game::gentity_s* actor,int owned,int* event,bool silent)
@@ -298,6 +306,8 @@ namespace vr::gameplay::weapons::native_carry
 		constexpr std::uint8_t set_model_entry[]{0x40,0x53,0x48,0x83,0xec,0x20,0x80,0x3a,0x00,0x48,0x8b,0xd9};
 		constexpr std::uint8_t dobj_update_call[]{0xe8,0x34,0x01,0x00,0x00};
 		constexpr std::uint8_t entity_dobj_entry[]{0x48,0x8d,0x05,0x69,0xfe,0x33,0x05,0x48,0x2b,0xc8};
+		constexpr std::uint8_t touch_rearm[]{0x45,0x85,0xc0,0x74,0x15,0x48,0x8b,0x82,0x18,0x01,0x00,0x00,0x48,0x85,0xc0,0x74,0x09,
+			0x83,0xb8,0x34,0xe8,0x00,0x00,0x00,0x75,0x0f,0x45,0x8b,0xc8,0xc6,0x81,0x4a,0x01,0x00,0x00,0x01,0xe9,0xd7,0xfe,0xff,0xff};
 		if (!native_ammunition::initialize() || !verify(0x14029CCB0,drop_entry) || !verify(0x1402EE620,free_entry) ||
 			!verify(0x14029F6A0,pickup_entry) || !verify(0x1402A05A0,scavenge_entry) || !verify(0x1402A000D,full_call) || !verify(0x1402F2EF0,select_entry) ||
 			!verify(0x14029D3B0,physics_entry) || !verify(0x1402A5640,trace_entry) ||
@@ -307,7 +317,7 @@ namespace vr::gameplay::weapons::native_carry
 			!verify(0x1402F25DC,existing_give) || !verify(0x14029F73D,manual_pickup) || !verify(vr::h2::sp::weapon_dual_wield_flag.address(),secondary_entry) ||
 			!verify(0x14029F709,admission_call) || !verify(0x1404953D1,script_gate) ||
 			!verify(0x14029F77B,pickup_free_call) || !verify(0x14029FE37,dual_payload_loop) ||
-			!verify(0x1402EF000,set_model_entry) || !verify(0x1402ED4E7,dobj_update_call) || !verify(vr::h2::sp::server_entity_dobj.address(),entity_dobj_entry)) return false;
+			!verify(0x1402EF000,set_model_entry) || !verify(0x14029F7A0,touch_rearm) || !verify(0x1402ED4E7,dobj_update_call) || !verify(vr::h2::sp::server_entity_dobj.address(),entity_dobj_entry)) return false;
 		free_hook.create(0x1402EE620,free_stub);
 		world_model_hook.create(0x1404B68E0,world_model_stub);
 		hide_parts_hook.create(0x1404B9FF0,hide_parts_stub);
@@ -528,7 +538,11 @@ namespace vr::gameplay::weapons::native_carry
 			std::memcpy(reinterpret_cast<std::byte*>(&game::g_entities[item.key.entity])+0x1a0,&split->pickup.flags,4);
 			splitting=&split_state;
 		}
-		utils::hook::invoke<void>(0x14029F6A0,&game::g_entities[item.key.entity],&game::g_entities[0],0);
+		// Touch_Item (0x14029F6A0) consumes the item's touch latch (+0x14a) on
+		// entry and leaves it clear when the pickup fails (e.g. a walk-over touch
+		// of an unowned gun). Native callers re-arm it first: enter through the
+		// same wrapper (0x14029F7A0) as a manual, non-automatic touch.
+		utils::hook::invoke<void>(0x14029F7A0,&game::g_entities[item.key.entity],&game::g_entities[0],0);
 		const bool accepted=(!live(item.key,item.weapon) || split_state.retained) && owns(game::g_entities[0].client,item.weapon);
 		if (!native_ammunition::finish_pickup(transfer,accepted)) {reason="native pickup rejected or script ownership changed";return false;}
 		recovered=transfer.id;

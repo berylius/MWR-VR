@@ -12,7 +12,8 @@ namespace vr::gameplay::weapons::physical_reload
 		using namespace hands;using namespace hands::pose_math;
 		const auto* live=f.find(s.owner.id());const auto* p=s.definition;
 		if(!live || !p || !s.binding.valid || live->assembly!=s.assembly || !valid_hand(live->owner.holding_hand()))return false;
-		const auto& d=*p;const int rear=int(live->owner.holding_hand()),off=1-rear;const float units=f.body.units_per_meter;
+		auto d=*p;d.interaction=p->interaction_for(v.active?v.original_ak_attachment:original_ak_attachment());
+		const int rear=int(live->owner.holding_hand()),off=1-rear;const float units=f.body.units_per_meter;
 		if(!(f.valid_hands&(1u<<off)) || units<=0)return false;
 		const auto gun=live->gun;const auto mirror=s.binding.mirror;
 		const bool knife=s.contact.knife_held;
@@ -20,7 +21,7 @@ namespace vr::gameplay::weapons::physical_reload
 		const bool knife_slide=!d.knife_slide_grips.empty() && (v.slide_held?v.knife_slide_grasp:knife);
 		const bool paired=knife || (v.magazine_leased() && v.knife_magazine_grasp) || (v.slide_held && v.knife_slide_grasp);
 		const auto basis=paired && s.binding.paired_valid?s.binding.paired_wrist:s.binding.wrist;
-		const anchor wrist{f.wrists[off].position,normalize(multiply(f.wrists[off].rotation,basis))};
+		const anchor wrist{f.wrists[off].position,normalize(multiply(f.wrists[off].rotation,basis)),f.wrists[off].scale};
 		const auto raw=compose(inverse(gun),wrist);
 		const auto magazine_pose=select_magazine_grip(d,raw.rotation,off,mirror,knife_mag,v.magazine_leased(),v.magazine_pose,
 			controller_in_body(f.wrists[off].rotation,f.body.body),v.ammo.magazine_inserted && (v.magazine_seated || v.magazine_grabbed));
@@ -28,7 +29,7 @@ namespace vr::gameplay::weapons::physical_reload
 			controller_in_body(f.wrists[off].rotation,f.body.body),true);
 		const auto in_wrist=magazine_pose.in_wrist;
 		const anchor magazine_wrist{wrist.position,normalize(multiply(f.wrists[off].rotation,
-			magazine_wrist_basis(d,magazine_pose,basis,knife_mag)))};
+			magazine_wrist_basis(d,magazine_pose,basis,knife_mag))),wrist.scale};
 		const auto mag=compose(magazine_wrist,in_wrist),attached=compose(gun,d.magazine_rest);
 		const auto source=knife_slide?d.knife_slide_grips:d.slide_grips;
 		if(source.size()>max_part_grips)return false;

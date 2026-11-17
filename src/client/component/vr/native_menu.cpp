@@ -13,7 +13,6 @@
 #include "component/command.hpp"
 #include "component/console.hpp"
 #include "component/input.hpp"
-#include "component/gui/gui.hpp"
 #include "component/scheduler.hpp"
 #include "game/game.hpp"
 #include "loader/component_loader.hpp"
@@ -163,7 +162,7 @@ namespace vr::native_menu
 			const auto root=get(roots,s.frontend?"UIRootFull":"UIRoot0");
 			const auto root_fields=get_properties<5>(root,{"m_blockButtonInput","m_blockMouseMove","persistentBackground","childRecord","flowManager"});
 			s.button_blocked=truth(root_fields[0]);s.mouse_blocked=truth(root_fields[1]);
-			s.blocked=s.button_blocked||s.mouse_blocked||(*game::keyCatchers&1)!=0||gui::captures_input();
+			s.blocked=s.button_blocked||s.mouse_blocked||(*game::keyCatchers&1)!=0;
 			s.background=element(root_fields[2]);
 			s.cursor=element(get(root_fields[3],"mouse_cursor"));
 			const auto menu_stack=get(root_fields[4],"menuInfoStack");
@@ -266,7 +265,7 @@ namespace vr::native_menu
 				row.flags=unsigned(frame.focused)|(fresh<<1)|(owner.button_blocked<<2)|(owner.mouse_blocked<<3)|(p.ready<<4)|(p.hit<<5)|
 					(frame.runtime_aim[0].valid<<6)|(frame.runtime_aim[1].valid<<7)|(owner.frontend<<8)|(owner.video<<9)|(owner.accept_screen<<10)|
 					(frame.trigger[0].active<<11)|(frame.trigger[1].active<<12)|(frame.trigger[0].down<<13)|(frame.trigger[1].down<<14)|
-					(bool(*game::keyCatchers&1)<<15)|(gui::captures_input()<<16)|(stick_mode<<17);
+					(bool(*game::keyCatchers&1)<<15)|(stick_mode<<17);
 				for(unsigned h=0;h<2;++h){row.trigger_generation[h]=frame.trigger[h].generation;row.trigger_presses[h]=frame.trigger[h].presses;}
 				const auto desktop=::input::ui_activity_counters();row.mouse_polls=desktop.mouse_polls;row.mouse_moves=desktop.mouse_moves;
 				row.mouse_suppressed=desktop.mouse_suppressed;row.key_events=desktop.key_events;
@@ -276,7 +275,7 @@ namespace vr::native_menu
 			// diagnostic is unloaded. Input delivery itself remains unconditional.
 			const auto record_input=debug_options::enabled(debug_options::probe::menu_input)
 				? std::make_optional(gsl::finally(record)) : std::nullopt;
-			const bool unavailable=!requested||!owner.enabled||!fresh||gui::captures_input()||(*game::keyCatchers&1);
+			const bool unavailable=!requested||!owner.enabled||!fresh||(*game::keyCatchers&1);
 			if(unavailable)
 			{::input::release_vr_ui_input();navigation.reset();pause_recenter.reset();acceptance.reset();accept_held=false;drag=false;toggle_armed=false;previous_sequence=0;return;}
 			const auto tap=[](int key){if(::input::vr_ui_key(key,true))::input::vr_ui_key(key,false);};

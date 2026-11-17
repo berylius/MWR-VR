@@ -32,6 +32,7 @@
 #define LUI_VR_OPTIONS        325
 #define VR_SETTINGS_SCHEMA    326
 #define VR_EXTRA_SETTINGS     327
+#define LUI_VR_HEIGHT_ART     328
 // 330 is OPENXR_LOADER_RESOURCE (launcher/preflight_resource.hpp).
 #define VR_LOCALE_EN        340
 #define VR_LOCALE_KO        341

@@ -14,9 +14,9 @@ namespace vr::settings_menu
 	namespace
 	{
 		using json = nlohmann::json;
-		constexpr std::array categories{"basics", "calibration", "gameplay", "cheats", "other"};
+		constexpr std::array categories{"basics", "calibration", "gameplay", "personalization", "cheats", "other"};
 		// Applied at game start only; changing them in game would mislead.
-		constexpr std::array launcher_only{settings::runtime_backend.name,settings::controller_pose_mode.name,settings::control_hand.name,settings::pistol_holster_side.name};
+		constexpr std::array launcher_only{settings::runtime_backend.name,settings::controller_pose_mode.name,settings::control_hand.name,settings::pistol_holster_side.name,settings::first_person_scale.name,settings::original_ak_attachment.name};
 
 		// Read during static initialization, like ui_scripting's Lua resources:
 		// once the game image is mapped, the process module no longer holds them.
@@ -110,6 +110,10 @@ namespace vr::settings_menu
 			e.group_label = text(language, e.group);
 			if (field.contains("visibleWhen") && field["visibleWhen"].is_array() && field["visibleWhen"].size() == 2)
 			{e.when_name = field["visibleWhen"][0].get<std::string>();e.when_value = condition(field["visibleWhen"][1]);}
+			if (field.contains("visibleWhenAll") && field["visibleWhenAll"].is_array())
+				for (const auto& test : field["visibleWhenAll"])
+					if (test.is_array() && test.size()==2 && test[0].is_string())
+						e.conditions.push_back({test[0].get<std::string>(),condition(test[1])});
 			const auto type = field["type"].get<std::string>();
 			if (type == "number")
 			{
@@ -189,6 +193,20 @@ namespace vr::settings_menu
 	{
 		if (!game::Dvar_FindVar(name.c_str()) || value.empty() || value.size() > 64 ||
 			value.find_first_of("\";\n\r") != std::string::npos) return false;
+		for (unsigned bank=0;bank<2;++bank)
+			if (name==settings::hand_angles_independent[bank].name && value=="1")
+			{
+				const auto* initialized=game::Dvar_FindVar(settings::hand_angles_initialized[bank].name);
+				if (initialized && !initialized->current.enabled)
+				{
+					const auto& shared=bank==0?settings::standard_hand_alignment:settings::hand_alignment;
+					const auto& hands=bank==0?settings::standard_independent_hand_angles:settings::independent_hand_angles;
+					for (const auto& hand:hands)
+						for (unsigned axis=0;axis<3;++axis)
+							command::execute(std::format("set {} {}",hand[axis].name,settings_menu::value(shared[axis+3].name)),true);
+					command::execute(std::format("set {} 1",settings::hand_angles_initialized[bank].name),true);
+				}
+			}
 		command::execute(std::format("set {} \"{}\"", name, value), true);
 		return true;
 	}

@@ -5,10 +5,11 @@
 // MWR (H1 SP) port gate.
 //
 // Overlord was written against MW2CR (H2 SP) and most components carry fixed
-// H2 addresses. Every source file still compiles, but a component only
+// H2 addresses. The MWR build excludes legacy host modules; remaining shared
+// translation units can contain optional components, but a component only
 // registers when its native addresses have been rebound to h1_sp64_ship.exe and
 // it is listed here. Unlisted components keep their H2 constants and must never
-// run against the MWR image.
+// run against the MWR image, including constructors.
 namespace mwr_port
 {
 	inline constexpr std::string_view enabled_components[] =
@@ -26,16 +27,19 @@ namespace mwr_port
 		"logger",
 		"filesystem",
 		"scripting", // Builtin calls, entity fields and level lifetime (no GSC loading/Lua).
+		"survey_heap", // 16 MB arena for the curl/hardware-survey heap (DXVK "Out of memory error (12)").
 		// Phase 2: VR runtime, native stereo and head tracking
 		"d3d11",
 		"camera",
 		"vr",
 		"vr::engine_stereo_renderer",
 		"vr::native_post_aa", // Per-eye SMAA T2x/Filmic history readers (MWR 0x140072E25/0x140073090).
+		"vr::shader_preload", // Lock native shader warmup off, including hardware optimization and LUI/config writes.
 		// Phase 3: VR menu panels and native HUD capture
 		"input",
 		"vr::native_menu",
 		"vr::native_hud_capture",
+		"vr::presentation_options", // vr_hideHud: cg_drawHUD readers rebound (MWR 0x1423645F8).
 		"vr::narrative_ui", // Subtitles, titles and fades on their own VR panel.
 		"vr::menu_backdrop",
 		"vr::native_waypoints",
@@ -48,12 +52,14 @@ namespace mwr_port
 		"vr::gameplay::weapons",
 		"vr::gameplay::weapon_capture",
 		"scene_models",
+		"scene_surface_storage", // Complete H1 arena/index ABI conversion: 512 KiB per native frontend.
 		"fastfiles::mwr_unload", // Zone unload boundary only: retires runtime models/parts before assets free.
 		"vr::gameplay::weapons::reload_boundary",
 		"vr::gameplay::weapons::physical_reload",
 		"vr::gameplay::weapons::physical_reload::presentation_component",
 		"vr::gameplay::weapons::native_closed_bolt",
 		"vr::gameplay::weapons::feedback", // Weapon interaction sounds (MWR aliases) and haptics.
+		"vr::gameplay::weapons::tracers", // H1 bullet/event/tracer appearance; native damage remains authoritative.
 		"vr::gameplay::weapons::independent_fire", // Carried guns fire from the hand muzzle (native PM fire is suppressed).
 		"vr::gameplay::weapons::tube", // Pump/lever tube feeds (physical pump and shell loading).
 		"vr::gameplay::weapons::tube::presenter_component",
@@ -91,6 +97,7 @@ namespace mwr_port
 		"vr::gameplay::turret_hands", // Mounted turrets (village_defend minigun): VR hands held on the rear grips.
 		"vr::gameplay::weapon_laser", // Weapon lasers (NVG IR) from the VR muzzle; native beam 0x140159560 replaced.
 		"vr::gameplay::weapons::underbarrel", // M203 (MWR viewmodel j_m203_slide/j_grenade): grip, slide, load, fire (FireWeapon launcher 0x1402F3B10).
+		"vr::gameplay::weapons::underbarrel::round_presentation::presenter_component",
 		"vr::gameplay::c4_detonator", // maps/_c4 detonator: trigger press sends the player's "detonate".
 		"vr::gameplay::aftermath_crawl", // aftermath prone crawl pulled by planted hands (Grip).
 		"vr::gameplay::air_support", // village_assault Cobra designator: hand at the ear + Grip, point, Trigger.

@@ -6,8 +6,8 @@
 #include "game/dvars.hpp"
 
 #include "console.hpp"
-#include "gui/gui.hpp"
 #include "d3d11.hpp"
+#include "dxvk_runtime.hpp"
 #include "d3d11/swap_chain_hook.hpp"
 
 #include <utils/string.hpp>
@@ -1745,7 +1745,9 @@ namespace d3d11
 			// but source that interface from a DXGI 1.1 factory so H2's own adapter
 			// and D3D11 device acquire the required sharing lineage.
 			dxgi_factory1_create_count.fetch_add(1, std::memory_order_relaxed);
-			const auto result = CreateDXGIFactory1(riid, pp_factory);
+			// vr_dxvk: the game alone gets DXVK (dxvk_runtime.hpp).
+			const auto* dxvk = dxvk_runtime::active();
+			const auto result = dxvk ? dxvk->create_factory1(riid, pp_factory) : CreateDXGIFactory1(riid, pp_factory);
 			last_dxgi_factory1_result.store(result, std::memory_order_release);
 			return result;
 		}
@@ -1776,7 +1778,8 @@ namespace d3d11
 			}
 #endif
 
-			const auto result = D3D11CreateDevice(p_adapter, driver_type, software, flags, p_feature_levels,
+			const auto* dxvk = dxvk_runtime::active();
+			const auto result = (dxvk ? dxvk->create_device : &D3D11CreateDevice)(p_adapter, driver_type, software, flags, p_feature_levels,
 				feature_levels, sdk_version, pp_device, p_feature_level, pp_immediate_context);
 			if (FAILED(result) || pp_device == nullptr || *pp_device == nullptr ||
 				pp_immediate_context == nullptr || *pp_immediate_context == nullptr)
@@ -1879,8 +1882,6 @@ namespace d3d11
 
 			try
 			{
-				gui::shutdown_gui();
-				gui::set_device(candidate.device.Get(), candidate.context.Get());
 			}
 			catch (const std::exception& error)
 			{
@@ -2207,7 +2208,6 @@ namespace d3d11
 		}
 		try
 		{
-			gui::shutdown_gui();
 		}
 		catch (const std::exception& error)
 		{
@@ -2325,8 +2325,6 @@ namespace d3d11
 			}
 			try
 			{
-				gui::shutdown_gui();
-				gui::set_device(promoted.device.Get(), promoted.context.Get());
 			}
 			catch (const std::exception& error)
 			{

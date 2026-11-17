@@ -178,6 +178,7 @@ namespace vr
 		scene_mode effective_scene_mode{scene_mode::engine_stereo};
 		std::uint64_t compositor_prepare_count{};
 		std::uint64_t compositor_render_count{};
+		std::uint64_t swapchain_wait_deferrals{};
 		std::uint64_t compositor_source_miss_count{};
 		frame_capture_status capture;
 		std::string last_compositor_error;

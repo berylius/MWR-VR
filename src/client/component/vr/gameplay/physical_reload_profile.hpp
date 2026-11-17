@@ -138,6 +138,14 @@ namespace vr::gameplay::weapons
 		const char* round_source{};
 		// The round bone already carries the whole visible column (G36): draw it once, not stacked.
 		bool round_column{};
+		physical_reload::profile interaction_for(bool original_ak) const noexcept
+		{
+			auto result = interaction;
+			// Upstream AK uses the ordinary swept well rail, retaining its manual
+			// latch/pull rules. Keep all MWR geometry and the longer charging stroke.
+			if (original_ak && native_name == "ak47") result.rock = nullptr;
+			return result;
+		}
 		const magazine_fill_recipe* magazine_fill() const noexcept
 		{
 			if (!rigid_magazine_source)
@@ -358,13 +366,11 @@ namespace vr::gameplay::weapons
 	}
 	inline hands::anchor compose_reload(hands::anchor a, hands::anchor b) noexcept
 	{
-		using namespace hands;
-		return {add(a.position, rotate(a.rotation, b.position)), normalize(multiply(a.rotation, b.rotation))};
+		return spatial_math::compose(a,b);
 	}
 	inline hands::anchor inverse_reload(hands::anchor a) noexcept
 	{
-		const auto q = hands::conjugate(hands::normalize(a.rotation));
-		return {hands::rotate(q, hands::scale(a.position, -1)), q};
+		return spatial_math::inverse(a);
 	}
 	inline hands::vec magazine_tip_in_well(const reload_profile& p,
 	                                       hands::anchor gun,

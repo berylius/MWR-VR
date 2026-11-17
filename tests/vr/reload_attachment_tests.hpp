@@ -68,6 +68,18 @@ namespace reload_attachment_tests
 				check(p::attachment_state_matches(kind::inserted_magazine,saturated,fewer,at,at+150ms),"unchanged three-round asset remains valid at the freshness boundary");
 				auto held=before;held.ammo.magazine_hand=off;held.ammo.held_rounds=2;
 				check(p::attachment_state_matches(kind::held_magazine,held,held,at,at),"unchanged offhand magazine remains eligible");
+				for(auto part:{kind::held_magazine,kind::inserted_magazine,kind::chamber_round,kind::action_partition})
+				{
+					using lifetime=p::attachment_pose_lifetime;
+					check(!p::attachment_state_matches(part,held,held,at,at+3200ms),"an unverified old pose still expires");
+					check(p::attachment_state_matches(part,held,held,at,at+3200ms,lifetime::retained_native_skeleton),"a retained native skeleton keeps the geometry hidden by that exact skeleton");
+					for(int change=0;change<7;++change)
+					{
+						auto live=held;auto now=at+3200ms;
+						switch(change){case 0:++live.reference_generation;break;case 1:++live.ammo.instance_generation;break;case 2:++live.owner.rear_revision;break;case 3:live.owner.rear=off;break;case 4:live.active=false;break;case 5:live.fault=true;break;case 6:now=at-1ms;break;}
+						check(!p::attachment_state_matches(part,held,live,at,now,lifetime::retained_native_skeleton),"retained geometry cannot cross real state, ownership, reference or clock boundaries");
+					}
+				}
 				for(int change=0;change<6;++change)
 				{
 					auto live=held;

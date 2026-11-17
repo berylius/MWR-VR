@@ -1,8 +1,10 @@
 #include <std_include.hpp>
 #include "c4_detonator.hpp"
+#include "../first_person_size.hpp"
 #include "view_aimed_weapon.hpp"
 #include "native_scripted_control.hpp"
 #include "weapon_carry_runtime.hpp"
+#include "native_ammunition.hpp"
 #include "carry_interaction.hpp"
 #include "hands/pose_math.hpp"
 #include "held_item_pose.hpp"
@@ -53,7 +55,6 @@ namespace vr::gameplay::c4_detonator
 		snapshot published, submitted;
 		std::atomic<int> holding{-1};
 		vr::hand holder{vr::hand::none};
-		bool detonated{};
 		controller_input::digital_press_gate trigger{};
 		std::unique_ptr<scene_models::rigid_part> part;
 		std::atomic<game::XModel*> model{};
@@ -83,14 +84,21 @@ namespace vr::gameplay::c4_detonator
 			}
 			return 0;
 		}
-		// Held only while the script has selected it (bog_a switches to the empty
-		// detonator). village_assault carries "c4" as placeable equipment in an
-		// action slot: owning it must not put a detonator in the hand (user: it
-		// appeared after every respawn there and took the GP25 loading hand).
+		// Held while the script has selected it, or while it is bog_a's empty
+		// detonator (giveweapon "c4" with no ammo): grabbing a gun reselects that
+		// gun natively, which must not take the detonator away (user: it was gone
+		// in the headset once a rifle was held). village_assault carries "c4" as
+		// placeable equipment with ammo in an action slot: owning it must not put
+		// a detonator in the hand (user: it appeared after every respawn there and
+		// took the GP25 loading hand).
 		bool owns_detonator() noexcept
 		{
 			const auto token = detonator_token();
-			return token && (view_aimed::native_weapon(game::g_entities[0].client) & 0x1ff) == token;
+			if (!token) return false;
+			const auto* ps = game::g_entities[0].client;
+			if ((view_aimed::native_weapon(ps) & 0x1ff) == token) return true;
+			const auto ammo = weapons::native_ammunition::observe_carried(ps, token);
+			return ammo.valid && ammo.loaded == 0 && ammo.reserve == 0;
 		}
 		anchor attachment(unsigned h, const snapshot& s) noexcept
 		{
@@ -109,11 +117,12 @@ namespace vr::gameplay::c4_detonator
 			if (!game::CL_IsCgameInitialized() || !game::g_entities[0].client) {holder = vr::hand::none;holding = -1;return;}
 			const auto input = controller_input::latest_interaction();
 			const bool owned = owns_detonator() && scripted_control::player_owns_arms(game::g_entities[0].client);
-			if (!owned) detonated = false;
-			if (!owned || detonated || !weapons::carry::active())
+			// A press maps/_c4 does not act on leaves the charge in place; the detonator
+			// stays in hand until the script takes it (it vanished after one press).
+			if (!owned || !weapons::carry::active())
 			{
 				holder = vr::hand::none;holding = -1;trigger = {};
-				reason = !owned ? "no detonator" : detonated ? "detonated" : "carry inactive";
+				reason = !owned ? "no detonator" : "carry inactive";
 			}
 			else
 			{
@@ -140,7 +149,7 @@ namespace vr::gameplay::c4_detonator
 					{
 						const scripting::entity player{game::scr_entref_t{0, 0}};
 						scripting::notify(player, "detonate", {});
-						++detonations;detonated = true;
+						++detonations;
 					}
 					catch (...) {++rejected;}
 				}
@@ -208,13 +217,14 @@ namespace vr::gameplay::c4_detonator
 			anchor wrist;
 			if (!held_item::visual_wrist(int(h), wrist)) return;
 			wrist.rotation = normalize(multiply(wrist.rotation, s.basis[h]));
+			wrist.scale=first_person_size::value();
 			const auto at = placement(wrist, h, s, mesh);
 			game::GfxScaledPlacement p{};
-			p.scale = 1;
+			p.scale = at.scale;
 			std::copy(at.position.begin(), at.position.end(), p.base.origin);
 			std::copy(at.rotation.begin(), at.rotation.end(), p.base.quat);
 			float white[]{1, 1, 1, 1};
-			scene_models::submit(mesh, &p, scene_models::no_cast_shadow, &lighting, white, white, white, 8.f);
+			scene_models::submit(mesh, &p, scene_models::no_cast_shadow, &lighting, white, white, white, 8.f,scene_models::visibility::held_item);
 			++submitted_count;
 		}
 		scene_models::placement_result prepare(const scene_models::preparation& p, const void* entry,
@@ -243,7 +253,7 @@ namespace vr::gameplay::c4_detonator
 				return result::omit;
 			for (float x : origin) if (!std::isfinite(x) || std::abs(x) > 1e7f) return result::omit;
 			const auto h = unsigned(s.holder);
-			const auto at = placement({add(pose.wrists[h].position, origin), pose.wrists[h].rotation}, h, s, nullptr);
+			const auto at = placement(attachments::wrist_frame(pose,h,origin), h, s, nullptr);
 			std::copy(at.position.begin(), at.position.end(), current.origin);
 			std::copy(at.rotation.begin(), at.rotation.end(), current.quat);
 			previous = current;

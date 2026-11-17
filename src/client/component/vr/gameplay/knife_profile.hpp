@@ -51,9 +51,9 @@ namespace vr::gameplay::equipment::knife_profile
 		wrist.rotation=normalize(multiply(wrist.rotation,anatomical));
 		return compose(compose(wrist,attachment(knife_grip::forward,mirror,right)),{grip_center,{0,0,0,1}}).position;
 	}
-	inline hands::anchor stowed(const chest_slots& chest,bool bayonet=false) noexcept
+	inline hands::anchor stowed(const chest_slots& chest,bool bayonet=false,float size=1.f) noexcept
 	{
-		auto object=chest.anchors[0];object.position=sub(object.position,rotate(object.rotation,grip_center));
+		auto object=chest.anchors[0];object.scale=size;object.position=sub(object.position,rotate(object.rotation,scale(grip_center,size)));
 		return bayonet?hands::pose_math::compose(object,bayonet_in_common()):object;
 	}
 }

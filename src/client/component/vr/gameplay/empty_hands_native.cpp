@@ -132,6 +132,13 @@ namespace vr::gameplay::hands::empty_native
 		const void* source_bind{};
 		bool created{}, visible{};
 		std::atomic_bool alive{true}, installed{};
+		bool preserve_held_weapon(const void* candidate) noexcept
+		{
+			if(!alive || !installed)return false;
+			for(const auto& v:weapon_objects)
+				if(candidate==&v.object && v.weapon.load() && v.location.load()==weapons::carry::location::held)return true;
+			return false;
+		}
 		std::atomic<const void*> solved_matrices{};
 		std::atomic_uint32_t solved_epoch{};
 		std::atomic_uint64_t submitted{}, builds{}, retired{}, rejected{};
@@ -410,7 +417,9 @@ namespace vr::gameplay::hands::empty_native
 				add_hook.invoke<void>(client);return;
 			}
 			head_pose_bridge::spatial_frame spatial;
-            const bool independent=filter && owned_native::active() && !vehicles::presentation_allowed() && !climbing;
+            // Carry retains a firearm for dismount. The fitted turret's hands
+            // own this pass while mounted, rather than that suspended firearm.
+            const bool independent=filter && owned_native::active() && !vehicles::presentation_allowed() && !climbing && !turret_hands::active();
             const bool spatial_ready=!vehicles::presentation_allowed() && !climbing && owned_requested(spatial);
 			const auto previous=suppress_native;
             suppress_native=independent || climbing || disarmed;
@@ -466,6 +475,7 @@ namespace vr::gameplay::hands::empty_native
 			<< " submitted=" << submitted << " rejected=" << rejected << " state=" << reason.load() << '\n';
 		out << "owned_viewmodels prepared=" << bool(prepared_hands.load()) << " builds=" << weapon_builds
 			<< " submitted=" << weapon_submissions << " rejected=" << weapon_rejections << " legacy_firearms_suppressed=" << suppressed_firearms << '\n';
+		out << scene_models::hand_visibility_status();
 		for (const auto& v:weapon_objects) out << "owned_object=" << &v.object << " weapon=" << v.weapon
 			<< " instance=" << v.instance << " resource=" << v.generation << " epoch=" << v.epoch << " location=" << int(v.location.load()) << '\n';
 		return out.str();
@@ -485,6 +495,7 @@ namespace vr::gameplay::hands::empty_native
 				!check(calc_pose,std::array<std::uint8_t,10>{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10}))
 			{ reason="native empty-hand contract rejected"; console::error("[VR hands] %s\n",reason.load()); return; }
 			fastfiles::on_pre_unload([]{firearm_models={};firearm_cursor=0;release();});
+			scene_models::on_preserve_hand_visibility(preserve_held_weapon);
 			add_hook.create(add_view_weapon,add);
 			submit_hook.create(submit_viewmodel,submit);
 			scheduler::loop(prepare_hands,scheduler::pipeline::main);

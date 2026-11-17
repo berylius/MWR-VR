@@ -30,6 +30,7 @@
 #include "engine_view_probe.hpp"
 #include "head_pose_bridge.hpp"
 #include "gameplay/hands/status.hpp"
+#include "gameplay/native_tracer.hpp"
 #include "gameplay/fixed_sniper.hpp"
 #include "gameplay/javelin_screen.hpp"
 #include "diagnostics/screen_display.hpp"
@@ -428,6 +429,7 @@ namespace vr::diagnostics
 		{
 			return vr::controllers::fire_input_status()+gameplay::weapons::reload_boundary::fire_gate_status()+
 				gameplay::weapons::underbarrel::report_status()+
+				gameplay::weapons::tracers::status()+
 				gameplay::fixed_sniper::format_input_status()+gameplay::fixed_sniper::format_render_status()+
 				gameplay::weapons::javelin_screen::format_status()+screen::auxiliary.format("auxiliary display scene",GetTickCount64());
 		}

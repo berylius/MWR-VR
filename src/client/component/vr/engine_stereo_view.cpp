@@ -1,9 +1,11 @@
 #include <std_include.hpp>
+#include "projection_bounds.hpp"
 
 #include "engine_stereo_view.hpp"
 #include <atomic>
 #include "stabilization.hpp"
 #include "placement_compensation.hpp"
+#include "native_aa_sample.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -107,15 +109,8 @@ namespace vr::engine_stereo_view
 			for (const auto& config : configs)
 			{
 				const auto& projection = config.eyes[config.view_eye];
-				const auto width = projection.tan_right - projection.tan_left;
-				const auto height = projection.tan_up - projection.tan_down;
-				if (!std::isfinite(projection.tan_left) ||
-					!std::isfinite(projection.tan_right) ||
-					!std::isfinite(projection.tan_down) ||
-					!std::isfinite(projection.tan_up) ||
-					projection.tan_left >= 0.0f || projection.tan_right <= 0.0f ||
-					projection.tan_down >= 0.0f || projection.tan_up <= 0.0f ||
-					width < 0.2f || width > 20.0f || height < 0.2f || height > 20.0f)
+				if (!projection_bounds::valid(projection.tan_left, projection.tan_right,
+					projection.tan_down, projection.tan_up))
 				{
 					return false;
 				}
@@ -186,12 +181,8 @@ namespace vr::engine_stereo_view
 		{
 			const auto width = tan_right - tan_left;
 			const auto height = tan_up - tan_down;
-			if (!std::isfinite(tan_left) || !std::isfinite(tan_right) ||
-				!std::isfinite(tan_down) || !std::isfinite(tan_up) ||
-				!std::isfinite(reverse_z_scale) || reverse_z_scale <= 0.0f ||
-				tan_left >= 0.0f || tan_right <= 0.0f || tan_down >= 0.0f ||
-				tan_up <= 0.0f || width < 0.2f || width > 40.0f ||
-				height < 0.2f || height > 40.0f)
+			if (!projection_bounds::valid(tan_left, tan_right, tan_down, tan_up) ||
+				!std::isfinite(reverse_z_scale) || reverse_z_scale <= 0.0f)
 			{
 				return false;
 			}
@@ -202,8 +193,8 @@ namespace vr::engine_stereo_view
 			std::array<float, 16> matrix{};
 			matrix[0] = 2.0f / width;
 			matrix[5] = 2.0f / height;
-			matrix[8] = -(tan_right + tan_left) / width;
-			matrix[9] = -(tan_up + tan_down) / height;
+			matrix[8] = -(tan_right / width + tan_left / width);
+			matrix[9] = -(tan_up / height + tan_down / height);
 			matrix[11] = 1.0f;
 			matrix[14] = reverse_z_scale;
 			std::memcpy(bytes.data() + projection_matrix_offset,
@@ -231,6 +222,8 @@ namespace vr::engine_stereo_view
 			output.publication = config.publication;
 			output.output_eye = config.output_eye;
 			output.view_eye = config.view_eye;
+			const auto jitter=native_post_aa::sample_jitter({read_float(natural,0x160),read_float(natural,0x164)},config.pair_id);
+			write_float(output.bytes,0x160,jitter[0]);write_float(output.bytes,0x164,jitter[1]);
 
 			// H2 viewaxis[1] points left. Eye 0 therefore moves along the positive
 			// axis and eye 1 along the negative axis.
@@ -483,9 +476,7 @@ namespace vr::engine_stereo_view
 		const engine_stereo_bridge::eye_projection result{
 			(-1.0f - matrix[8]) / matrix[0], (1.0f - matrix[8]) / matrix[0],
 			(-1.0f - matrix[9]) / matrix[5], (1.0f - matrix[9]) / matrix[5]};
-		if (!std::isfinite(result.tan_left) || !std::isfinite(result.tan_right) ||
-			!std::isfinite(result.tan_down) || !std::isfinite(result.tan_up) ||
-			result.tan_left >= 0 || result.tan_right <= 0 || result.tan_down >= 0 || result.tan_up <= 0)
+		if (!projection_bounds::valid(result.tan_left, result.tan_right, result.tan_down, result.tan_up))
 			return false;
 		output = result;
 		return true;
@@ -502,8 +493,7 @@ namespace vr::engine_stereo_view
 			!std::isfinite(value.tan_down) || !std::isfinite(value.tan_up) ||
 			!std::isfinite(value.near_distance_units) ||
 			!std::isfinite(value.horizontal_origin_expansion) ||
-			value.tan_left >= 0.0f || value.tan_right <= 0.0f ||
-			value.tan_down >= 0.0f || value.tan_up <= 0.0f ||
+			!projection_bounds::valid(value.tan_left, value.tan_right, value.tan_down, value.tan_up) ||
 			value.near_distance_units <= 0.0f ||
 			value.horizontal_origin_expansion <= 0.0f)
 		{

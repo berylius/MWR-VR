@@ -14,11 +14,11 @@ local korean = language == 15 -- LANGUAGE_KOREAN
 local extra = korean and {
     button_desc = "VR 설정을 게임 안에서 바꿉니다.",
     measure = "지금 키 측정",
-    measure_desc = "선택한 뒤 똑바로 서서 두 팔을 옆으로 쭉 뻗고(T자) 양손 트리거를 함께 당기세요. 키, 어깨 높이·너비, 팔 길이를 잽니다(20초 안에). 메뉴 밖에서는 X 버튼을 3초 누른 뒤 같은 방법으로 잽니다."
+    measure_desc = "T자 자세로 서서 양손 트리거를 게이지가 찰 때까지 2초간 누르세요. 키·어깨·팔 길이를 함께 측정합니다. 메뉴 밖에서는 X 버튼을 3초 누르면 측정 화면을 엽니다."
 } or {
     button_desc = "Change VR settings in game.",
     measure = "Measure height now",
-    measure_desc = "Select, then stand upright with both arms straight out to the sides (T-pose) and pull both triggers within 20 seconds. Measures your height, shoulder height and width, and arm length. Outside menus, hold X for 3 seconds first."
+    measure_desc = "Stand in a T-pose and hold both triggers for 2 seconds until the gauge fills. Measures height, shoulders and arm length together. Outside menus, hold X for 3 seconds to open the measurement screen."
 }
 
 local settings = game:vrsettings(language)
@@ -29,13 +29,24 @@ local function get(name)
 end
 
 local function visible(entry)
-    return entry.whenName == "" or get(entry.whenName) == entry.whenValue
+    if entry.whenName ~= "" and get(entry.whenName) ~= entry.whenValue then return false end
+    if entry.conditions then
+        for _, condition in ipairs(entry.conditions) do
+            if get(condition.name) ~= condition.value then return false end
+        end
+    end
+    return true
 end
 
 local function controls_visibility(name)
     for i = 1, #settings do
         if settings[i].whenName == name then
             return true
+        end
+        if settings[i].conditions then
+            for _, condition in ipairs(settings[i].conditions) do
+                if condition.name == name then return true end
+            end
         end
     end
     return false
@@ -146,18 +157,104 @@ local function add_divider(menu, label)
     menu.list:addElement(element)
 end
 
+local measure_text = korean and {
+    title = "키 · 팔 길이 측정",
+    instruction = "똑바로 서서 두 팔을 어깨 높이로 쭉 뻗으세요",
+    states = {
+        "양손 트리거를 놓은 뒤 시작하세요",
+        "T자 자세로 양손 트리거를 계속 누르세요",
+        "자세를 유지하세요 · 측정 중",
+        "똑바로 서세요 · VR 바닥 높이 설정도 확인하세요",
+        "헤드셋과 양손 컨트롤러의 추적을 확인하세요",
+        "게임에 들어가 손이 표시된 뒤 측정해 주세요",
+        "측정 완료"
+    },
+    result = "키 %s cm  ·  팔 길이 %.1f cm",
+    restart = "다시 측정"
+} or {
+    title = "Height & arm length",
+    instruction = "Stand upright with both arms straight out at shoulder height",
+    states = {
+        "Release both triggers to begin",
+        "Hold both triggers in a T-pose",
+        "Keep your pose · measuring",
+        "Stand upright · check your VR floor setup",
+        "Check headset and both controller tracking",
+        "Enter the game and let your hands appear first",
+        "Measurement complete"
+    },
+    result = "Height %s cm  ·  Arm length %.1f cm",
+    restart = "Measure again"
+}
+
+-- Native LUI has no SVG material loader. These merged white-image spans are
+-- generated from height-tpose.svg and embedded with the menu resources.
+LUI.MenuBuilder.registerType("vr_height_measure", function(root)
+    if Engine.GetDvarInt("vr_heightState") == 0 or Engine.GetDvarInt("vr_heightState") == 7 then
+        Engine.ExecNow("vr_measure_height begin")
+    end
+    local menu = LUI.MenuTemplate.new(root, {menu_title = measure_text.title, uppercase_title = true})
+    local function bounds(left, top, right, bottom)
+        return {leftAnchor = false, rightAnchor = false, topAnchor = false, bottomAnchor = false,
+            left = left, right = right, top = top, bottom = bottom}
+    end
+    local panel = LUI.UIElement.new(bounds(-300, -200, 300, 210))
+    menu:addElement(panel)
+    local function rectangle(left, top, right, bottom, color)
+        local properties = bounds(left, top, right, bottom)
+        properties.material = RegisterMaterial("white")
+        properties.color = color
+        local image = LUI.UIImage.new(properties)
+        panel:addElement(image)
+        return image
+    end
+    local function label(top, bottom, size)
+        local properties = bounds(-300, top, 300, bottom)
+        properties.font = CoD.TextSettings.BodyFont.Font
+        properties.fontSize = size
+        properties.alignment = LUI.Alignment.Center
+        local text = LUI.UIText.new(properties)
+        panel:addElement(text)
+        return text
+    end
+    local instruction = label(-190, -165, 20)
+    instruction:setText(measure_text.instruction)
+    for _, span in ipairs(VRHeightSilhouette) do
+        rectangle((span[1]-160)*0.8, -150+span[2]*0.8,
+            (span[3]-160)*0.8, -150+span[4]*0.8, {r = 0.86, g = 0.9, b = 0.94})
+    end
+    rectangle(-180, 108, 180, 120, {r = 0.17, g = 0.2, b = 0.24})
+    local gauge = rectangle(-180, 108, -180, 120, {r = 0.34, g = 0.85, b = 0.65})
+    local status = label(134, 158, 20)
+    local result = label(166, 190, 20)
+    local function refresh()
+        Engine.ExecNow("vr_measure_height tick")
+        local state = Engine.GetDvarInt("vr_heightState")
+        local progress = math.max(0, math.min(1000, Engine.GetDvarInt("vr_heightProgress")))
+        gauge:registerAnimationState("fill", bounds(-180, 108, -180+360*progress/1000, 120))
+        gauge:animateToState("fill", 0)
+        status:setText((measure_text.states[state] or measure_text.states[2]) ..
+            (state == 3 and string.format("  %d%%", math.floor(progress/10)) or ""))
+        result:setText(state == 7 and string.format(measure_text.result,
+            get("vr_playerHeight"), (tonumber(get("vr_measuredArmLength")) or 0)*100) or "")
+    end
+    menu:registerEventHandler("vr_height_refresh", refresh)
+    menu:addElement(LUI.UITimer.new(50, "vr_height_refresh"))
+    menu:registerEventHandler("menu_close", function()
+        Engine.ExecNow("vr_measure_height cancel")
+    end)
+    menu:AddButton(measure_text.restart, function() Engine.ExecNow("vr_measure_height begin") end)
+    -- Keep the restart button below the measurement panel.
+    menu.list:registerAnimationState("height_footer", bounds(-180, 225, 180, 265))
+    menu.list:animateToState("height_footer", 0)
+    menu:AddBackButton()
+    refresh()
+    return menu
+end)
+
 local function add_measure(menu)
     menu:AddButton(extra.measure, function()
-        -- Armed: T-pose and both triggers measure. Rebuild once a result lands.
-        local before = Engine.GetDvarInt("vr_heightMeasured")
-        Engine.ExecNow("vr_measure_height arm")
-        menu:registerEventHandler("vr_measure_poll", function()
-            if Engine.GetDvarInt("vr_heightMeasured") ~= before then
-                before = Engine.GetDvarInt("vr_heightMeasured")
-                reopen(menu)
-            end
-        end)
-        menu:addElement(LUI.UITimer.new(250, "vr_measure_poll"))
+        LUI.FlowManager.RequestAddMenu(nil, "vr_height_measure")
     end, nil, true, nil, {
         desc_text = extra.measure_desc
     })

@@ -177,6 +177,7 @@ filter {}
 linkoptions {"/IGNORE:4254", "/DYNAMICBASE:NO", "/SAFESEH:NO", "/LARGEADDRESSAWARE", "/LAST:.main", "/PDBCompress"}
 
 files {"./src/client/**.rc", "./src/client/**.hpp", "./src/client/**.cpp", "./src/client/resources/**.*"}
+dofile(path.join(_MAIN_SCRIPT_DIR, "premake/mwr_host.lua"))()
 files {"./assets/icon/Icon.ico"}
 
 includedirs {"./src/client", "./src/common", "%{prj.location}/src"}
@@ -191,7 +192,7 @@ prebuildcommands {'python "%{wks.location}/../tools/build_launcher.py" || exit /
 includedirs {"%{wks.location}/deps/webview2/include", "%{wks.location}/launcher-ui"}
 resincludedirs {"$(ProjectDir)launcher-ui"}
 libdirs {"%{wks.location}/deps/webview2/lib"}
-links {"WebView2LoaderStatic", "ole32", "shlwapi", "version"}
+links {"WebView2LoaderStatic", "ole32", "shlwapi", "version", "dwmapi"}
 
 -- Keep the Unicode CASC API isolated from the legacy game's ANSI PCH.
 filter "files:src/client/launcher/game_language.cpp"
@@ -210,7 +211,7 @@ local function copy_client_resources(destination)
 		-- h1_sp64_ship.exe; only the LUI gameplay scripts are staged.
 		'{COPYDIR} "%{wks.location}/../data/ui_scripts/vr_gameplay" "' .. path.join(destination, "overlord-mwr/ui_scripts/vr_gameplay") .. '"',
 		'{COPYDIR} "%{wks.location}/../data/ac130_cabin" "' .. path.join(destination, "overlord-mwr/ac130_cabin") .. '"',
-		-- Optional Vulkan renderer: the launcher installs these into the game folder (launcher/dxvk_install.cpp).
+		-- Optional Vulkan renderer: the game loads these by full path (component/dxvk_runtime.hpp).
 		'{COPYDIR} "%{wks.location}/../data/dxvk" "' .. path.join(destination, "overlord-mwr/dxvk") .. '"',
 		'{MKDIR} "' .. path.join(destination, "steamvr") .. '"',
 		'{COPYFILE} "%{wks.location}/../assets/steamvr/cover.png" "' .. path.join(destination, "steamvr/cover.png") .. '"',

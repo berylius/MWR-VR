@@ -1,8 +1,6 @@
 #include <std_include.hpp>
 #include "functions.hpp"
 
-#include "component/gsc/script_extension.hpp"
-#include "component/gsc/script_loading.hpp"
 
 #include <utils/string.hpp>
 #include <xsk/gsc/engine/h1.hpp>
@@ -11,6 +9,7 @@ namespace xsk::gsc::h1
 {
 	extern std::array<std::pair<u16, char const*>, func_count> const func_list;
 	extern std::array<std::pair<u16, char const*>, meth_count> const meth_list;
+	extern std::array<std::pair<u32, char const*>, token_count> const token_list;
 }
 
 namespace scripting
@@ -67,6 +66,26 @@ namespace scripting
 
 			return 0;
 		}
+		const auto& token_names()
+		{
+			static const auto names = []
+			{
+				std::unordered_map<unsigned int, std::string_view> result;
+				for (const auto& [id, name] : xsk::gsc::h1::token_list) result.emplace(id, name);
+				return result;
+			}();
+			return names;
+		}
+		const auto& token_ids()
+		{
+			static const auto ids = []
+			{
+				std::unordered_map<std::string_view, unsigned int> result;
+				for (const auto& [id, name] : xsk::gsc::h1::token_list) result.emplace(name, id);
+				return result;
+			}();
+			return ids;
+		}
 	}
 
 	std::vector<std::string> find_token(unsigned int id)
@@ -75,23 +94,20 @@ namespace scripting
 
 		results.push_back(utils::string::va("_ID%i", id));
 		results.push_back(utils::string::va("_id_%04X", id));
-		if (gsc::gsc_ctx) results.push_back(gsc::gsc_ctx->token_name(id));
+		if (const auto found = token_names().find(id); found != token_names().end()) results.emplace_back(found->second);
 
 		return results;
 	}
 
 	std::string find_token_single(unsigned int id)
 	{
-		return gsc::gsc_ctx ? gsc::gsc_ctx->token_name(id) : utils::string::va("_ID%i", id);
+		const auto found = token_names().find(id);
+		return found != token_names().end() ? std::string(found->second) : utils::string::va("_ID%i", id);
 	}
 
 	unsigned int find_token_id(const std::string& name)
 	{
-		const auto id = gsc::gsc_ctx ? gsc::gsc_ctx->token_id(name) : 0u;
-		if (id)
-		{
-			return id;
-		}
+		if (const auto found = token_ids().find(name); found != token_ids().end()) return found->second;
 
 		const auto parsed_id = parse_token_id(name);
 		if (parsed_id)

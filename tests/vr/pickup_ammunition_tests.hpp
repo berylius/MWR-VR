@@ -23,7 +23,9 @@ namespace pickup_ammunition_tests
 				"hand candidate and grip paths both preserve native script pickup restrictions");
 		}
 		check(!admit_duplicate_pickup(pickup_context::native,true,true,0,0,0),"ordinary native use lists do not gain a global duplicate bypass");
-		check(suppress_weapon_touch(true,true,true,false),"walking over owned or unowned firearms cannot consume their ammo or entities");
+		check(suppress_weapon_touch(true,true,true,false),"a non-admitted use touch cannot consume a firearm");
+		check(!suppress_weapon_touch(true,true,true,false,true,false),"walking over a firearm keeps native ammo scavenging (ammo only)");
+		check(suppress_weapon_touch(true,true,true,false,true,true),"walking over a gun the player dropped never consumes it");
 		check(!suppress_weapon_touch(true,true,true,true),"the exact admitted grip pickup retains native ammo transfer and notifications");
 		check(!suppress_weapon_touch(false,true,true,false) && !suppress_weapon_touch(true,false,true,false),"flat gameplay and other actors retain native pickup behavior");
 		check(!suppress_weapon_touch(true,true,false,false),"ordinary ammo and mission items keep native touch handling");

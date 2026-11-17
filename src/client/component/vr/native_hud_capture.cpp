@@ -1,4 +1,6 @@
 #include <std_include.hpp>
+#include "ui_texture_limits.hpp"
+static_assert(vr::ui_texture_limits::maximum_dimension == D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION);
 #include "gameplay/fixed_sniper.hpp"
 #include "gameplay/javelin_screen.hpp"
 #include "diagnostics/screen_display.hpp"
@@ -913,7 +915,7 @@ namespace vr::native_hud_capture
 			{
 				const auto& v = viewports[0];
 				if (!std::isfinite(v.Width) || !std::isfinite(v.Height) || v.Width < 16 || v.Height < 16 ||
-					v.Width > 8192 || v.Height > 8192 || v.Width*v.Height > (menu ? 8388608 : 16777216) ||
+					!ui_texture_limits::valid_extent(v.Width, v.Height) ||
 					v.TopLeftX != 0 || v.TopLeftY != 0 || v.Width != std::floor(v.Width) || v.Height != std::floor(v.Height))
 				{ s.failed = true; return; }
 				if (s.output && (s.output->width != v.Width || s.output->height != v.Height))

@@ -2,11 +2,12 @@
 #include <string>
 #include <filesystem>
 #include <fstream>
+#include "game/mwr/image.hpp"
 
 namespace game_data
 {
 	// MWR Steam build h1_sp64_ship.exe (20213128 bytes).
-	inline constexpr std::uintmax_t supported_binary_size = 0x1346D88;
+	inline constexpr std::uintmax_t supported_binary_size = game::mwr::image::file_size;
 	inline std::string get_game_binary_path()
 	{
 		return "h1_sp64_ship.exe";
@@ -39,4 +40,5 @@ namespace game_data
 	std::string get_config_file_path();
 	std::string get_config_source_path();
 	void initialize_players_folder();
+	void* resolve_profile_import(const std::string& library, const std::string& name);
 }

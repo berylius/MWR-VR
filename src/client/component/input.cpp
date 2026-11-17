@@ -6,8 +6,6 @@
 #include "native_ui_pointer.hpp"
 #include "vr/debug_options.hpp"
 
-#include "game_console.hpp"
-#include "gui/gui.hpp"
 #include "game/ui_scripting/execution.hpp"
 
 #include <utils/hook.hpp>
@@ -35,10 +33,6 @@ namespace input
 		void cl_char_event_stub(const int local_client_num, const int key)
 		{
 			// MWR: the Overlord in-game console component is not ported yet.
-			if (!gui::gui_char_event(local_client_num, key))
-			{
-				return;
-			}
 
 			cl_char_event_hook.invoke<void>(local_client_num, key);
 		}
@@ -48,10 +42,6 @@ namespace input
 			++activity;
 			if(vr::debug_options::enabled(vr::debug_options::probe::menu_input))++key_events;
 			if(key>=0&&key<int(vr_owned.size()))vr_owned[key]=false;
-			if (!gui::gui_key_event(local_client_num, key, down))
-			{
-				return;
-			}
 
 			if(local_client_num==0&&down&&key>=game::K_MOUSE1&&key<=game::K_MWHEELUP)
 			{
@@ -88,17 +78,12 @@ namespace input
 				native_ui_pointer::decision decision;
 				{
 					const std::lock_guard lock(pointer_mutex);
-					if(gui::captures_input())pointer_source.release();
 					decision=pointer_source.native_position(x,y);
 				}
 				if(decision.activity){++activity;if(trace_input)++mouse_moves;}
 				// Passive native polling must not snap an owned VR pointer back to
 				// the stationary desktop cursor. Real movement immediately forwards.
 				if(!decision.forward){if(trace_input)++mouse_suppressed;return;}
-			}
-			if (!gui::gui_mouse_event(local_client_num, x, y))
-			{
-				return;
 			}
 
 			cl_mouse_move_hook.invoke<void>(local_client_num, x, y);

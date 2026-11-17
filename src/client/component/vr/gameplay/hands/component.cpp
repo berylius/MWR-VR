@@ -4,6 +4,9 @@
 #include "status.hpp"
 #include "../weapons/derived_profiles.hpp"
 #include "../weapon_capture.hpp"
+#include "model_size.hpp"
+#include "../../first_person_size.hpp"
+#include "../first_person_mesh_size.hpp"
 #include "../../h2/entrypoints.hpp"
 #include "component/vr/gameplay/hands/rig_builder.hpp"
 #include "component/vr/gameplay/weapon_pose_library.hpp"
@@ -45,6 +48,7 @@
 #include "../javelin_screen.hpp"
 #include "../weapon_profiles.hpp"
 #include "../physical_reload_presenter.hpp"
+#include "../physical_reload_runtime.hpp"
 #include "../stowed_reload_pose.hpp"
 #include "../magazine_grip_selection.hpp"
 #include "../cylinder_presenter.hpp"
@@ -53,6 +57,7 @@
 #include "../launcher_presenter.hpp"
 #include "../heartbeat_runtime.hpp"
 #include "../underbarrel_runtime.hpp"
+#include "../underbarrel_presenter.hpp"
 #include "../hand_interaction/runtime.hpp"
 #include "../equipment_runtime.hpp"
 #include "attachment_pose.hpp"
@@ -128,6 +133,61 @@ namespace vr::gameplay::hands
 		std::mutex mutex;
 		thread_local bool in_hook{};
 		std::uint64_t calls{}, applications{}, skipped{}, limited_left{}, limited_right{}, transition_poses{};
+		std::uint64_t native_motion_frames{};
+		float native_motion_peak{}; // Largest part offset from the gun-root bind seen (units).
+		// vr_autoReload (MWR): the held gun is a tree-less owned DObj, so the stock
+		// reload/fire animation runs only on the hidden native viewmodel (its
+		// CG_AddViewWeapon still animates it; only the submission is withheld).
+		// Copy that viewmodel's gun-part motion (magazine, bolt, handle), relative to
+		// its gun root, onto the solved gun. The gun root stays at the hand.
+		// Caller is inside calc_skeleton_stub (in_hook), so this calc is native.
+		unsigned native_part_motion(const object_layout& object, std::span<bone> solved,float model_scale) noexcept
+		{
+			using namespace hands::pose_math;
+			if (!weapons::physical_reload::native_reload() || !object.models || object.model_count < 2 ||
+			    !object.models[0] || !object.models[1])
+				return 0;
+			auto* native = viewmodel_object(0);
+			if (!native || native == &object || !native->models || native->model_count > 32 || viewmodel_object(1))
+				return 0;
+			const auto* gun = object.models[1];
+			unsigned offset{};
+			bool found{};
+			for (unsigned m = 0; m < native->model_count && !found; ++m)
+			{
+				if (!native->models[m]) return 0;
+				if (native->models[m] == gun) found = true;
+				else offset += native->models[m]->numBones;
+			}
+			const unsigned target = object.models[0]->numBones;
+			if (!found || !gun->numBones || offset + gun->numBones > native->bone_count ||
+			    target + gun->numBones > object.bone_count || target + gun->numBones > solved.size())
+				return 0;
+			alignas(16) std::array<std::uint32_t, 8> bits{};
+			for (unsigned b = 0; b < native->bone_count; ++b)
+				bits[b / 32] |= 0x80000000u >> (b % 32);
+			calc_skeleton_hook.invoke<void>(native, bits.data());
+			if (!native->matrices) return 0;
+			for (unsigned w = 0; w < bits.size(); ++w)
+				if ((native->calculated[w] & bits[w]) != bits[w]) return 0;
+			const auto native_root = inverse(as_anchor(native->matrices[offset]));
+			const auto root = as_anchor(solved[target],model_scale);
+			for (unsigned b = 1; b < gun->numBones; ++b)
+			{
+				const auto local = compose(native_root, as_anchor(native->matrices[offset + b]));
+				if (gun->baseMat)
+				{
+					const vec bind{gun->baseMat[b].trans[0], gun->baseMat[b].trans[1], gun->baseMat[b].trans[2]};
+					native_motion_peak = std::max(native_motion_peak, length(sub(local.position, bind)));
+				}
+				const auto placed = compose(root, local);
+				solved[target + b].rotation = placed.rotation;
+				solved[target + b].position = placed.position;
+				solved[target + b].weight = 2.f;
+			}
+			++native_motion_frames;
+			return gun->numBones - 1;
+		}
 		const char* reason = "waiting for first-person skeleton";
 		bool installed{};
 		struct rig_binding
@@ -261,6 +321,7 @@ namespace vr::gameplay::hands
 				return false;
 			}
 			result = resolved.layout;
+			result.model_scale = first_person_size::freeze();
 			const auto twists =
 			    bind_forearm_twist(result, {bones.data(), object.bone_count}, models[resolved.hands_model]);
 			solver().binding.twist_binding = twists;
@@ -346,6 +407,8 @@ namespace vr::gameplay::hands
 				                                               {models.data(), object.model_count});
 				solver().binding.ads_sight = weapons::optics::bind_comfort(
 				    {object.models, object.model_count}, {models.data(), object.model_count});
+				solver().binding.optic.model_scale=result.model_scale;
+				solver().binding.ads_sight.model_scale=result.model_scale;
 				solver().binding.pose_library_data = bind_weapon_poses(
 				    result, {bones.data(), object.bone_count}, *solver().binding.active_profile);
 				solver().binding.heartbeat_parts =
@@ -537,7 +600,7 @@ namespace vr::gameplay::hands
 			                 [](float x) { return std::isfinite(x) && std::abs(x) < 1e7f; }))
 				return false;
 			anchor gun;
-			if (!carry::place_stowed_weapon(storage.item, *profile, body, storage.layout, gun))
+			if (!carry::place_stowed_weapon(storage.item, *profile, body, storage.layout, gun, layout.model_scale))
 				return false;
 			gun.position = sub(gun.position, offset);
 			alignas(16) std::array<std::uint32_t, 8> all{};
@@ -550,6 +613,7 @@ namespace vr::gameplay::hands
 				if ((object->calculated[i] & all[i]) != all[i])
 					return false;
 			auto solved = solver().binding.empty_bind;
+			size_model_pose(layout, solved);
 			if (!apply_weapon_rest(layout, solver().binding.pose_library_data, *profile, solved))
 				return false;
 			move_part(layout, layout.gun, gun, solved);
@@ -632,6 +696,7 @@ namespace vr::gameplay::hands
 					native_hidden[i / 32] |= 0x80000000u >> (i % 32);
 			std::memcpy(native_bits, native_hidden.data(), sizeof(native_hidden));
 			commit_render_bones(solved, layout.count, object->matrices, lag);
+			first_person_mesh_size::publish(object,object->matrices,object->timestamp,layout.model_scale);
 			viewmodel_visibility::publish(
 			    object, object->matrices, object->timestamp, hidden, profile->viewmodel.visibility);
 			owned_native::accept(object, object->matrices, object->timestamp);
@@ -860,7 +925,7 @@ namespace vr::gameplay::hands
 			auto owner = model_pose_owner(
 			    independent ? owned_native::owner(object) : weapons::sample_native_equipped(),
 			    empty,
-			    scripted_control::predicted_disarmed() || vehicles::presentation_allowed() || cliffhanger_physical::independent_hands() ||
+			    scripted_control::predicted_disarmed() || vehicles::presentation_allowed() || turret_hands::active() || cliffhanger_physical::independent_hands() ||
 			        sequences::independent_hands(game::CG_GetPredictedPlayerState(0)));
 			probe.owner = owner;
 			bool selection_transition = false;
@@ -1019,6 +1084,7 @@ namespace vr::gameplay::hands
 					        probe.head_position);
 				}
 			std::array<bone, 256> solved{};
+			model_size_scope sized_source(layout,{object->matrices,std::size_t(layout.count)});
 			auto storage_body = spatial.body;
 			if (storage_body.valid)
 				storage_body.position = sub(storage_body.position, view_offset);
@@ -1111,6 +1177,7 @@ namespace vr::gameplay::hands
 				// Seed the model's own complete bind pose, rebased at the current
 				// head/view anchor, rather than inventing an animation or old weapon.
 				auto rest = solver().binding.empty_bind;
+				size_model_pose(layout,rest);
 				for (int i = 0; i < layout.count; ++i)
 					rest[i].position =
 					    add(sub(rest[i].position, solver().binding.empty_head_anchor), probe.head_position);
@@ -1141,6 +1208,8 @@ namespace vr::gameplay::hands
 				reload_tokens = interaction_presentation.reload_item_tokens;
 				finalize_arms();
 				commit_render_bones(solved, layout.count, object->matrices, lag);
+				sized_source.commit();
+				first_person_mesh_size::publish(object,object->matrices,object->timestamp,layout.model_scale);
 				attachments::publish(
 				    {reinterpret_cast<std::uintptr_t>(object),
 				     reinterpret_cast<std::uintptr_t>(object->matrices),
@@ -1158,7 +1227,7 @@ namespace vr::gameplay::hands
 				      solver().binding.equipment_parts.library.mirror_basis[layout.arms[1].wrist]},
 				     {},
 				     storage_body,
-				     reload_tokens});
+				     reload_tokens,layout.model_scale});
 				empty_native::accept(object, object->matrices, object->timestamp);
 				vehicles::publish_render_hands(
 				    input,
@@ -1518,6 +1587,18 @@ namespace vr::gameplay::hands
 				                                  spatial.units_per_meter,
 				                                  {solved.data(), size_t(layout.count)},
 				                                  &hand_motion);
+				weapons::underbarrel::round_presentation::present(
+				    object,
+				    object->timestamp,
+				    object->matrices,
+				    solver().binding.underbarrel_parts,
+				    module_grip,
+				    owner,
+				    input,
+				    hands::pose_math::as_anchor(solved[layout.gun], layout.model_scale),
+				    view_offset,
+				    spatial.units_per_meter,
+				    gameplay && !selection_transition);
 				// New-pinch arbitration runs in the server controller. A render-time
 				// modifier must not cancel an already held primary magazine/handle.
 				const bool primary_manipulation = manipulation;
@@ -1708,7 +1789,7 @@ namespace vr::gameplay::hands
 				const auto& contact = carry_profile.controls[control == vr::hand::left ? 0 : 1];
 				control_grip = {
 				    true,
-				    add(solved[layout.gun].position, rotate(solved[layout.gun].rotation, contact.position)),
+				    transform_point(hands::pose_math::as_anchor(solved[layout.gun],layout.model_scale),contact.position),
 				    view_offset};
 				if (owner.can_fire())
 				{
@@ -1783,7 +1864,7 @@ namespace vr::gameplay::hands
 					auto scene = weapons::carry::scene{
 					    owner,
 					    {add(solved[layout.gun].position, view_offset),
-					     normalize(solved[layout.gun].rotation)},
+					     normalize(solved[layout.gun].rotation), layout.model_scale},
 					    carry_profile.controls,
 					    owner.can_fire() ? probe.grip.support : vr::hand::none,
 					    input.sequence,
@@ -1792,8 +1873,8 @@ namespace vr::gameplay::hands
 					    carry_profile.supports,
 					    layout.muzzle >= 0
 					        ? hands::pose_math::compose(
-					              hands::pose_math::inverse(hands::pose_math::as_anchor(solved[layout.gun])),
-					              hands::pose_math::as_anchor(solved[layout.muzzle]))
+					              hands::pose_math::inverse(hands::pose_math::as_anchor(solved[layout.gun], layout.model_scale)),
+					              hands::pose_math::as_anchor(solved[layout.muzzle], layout.model_scale))
 					        : anchor{},
 					    layout.muzzle >= 0,
 					    solver().binding.active_profile,
@@ -1860,7 +1941,7 @@ namespace vr::gameplay::hands
 					contact[1] = -contact[1];
 				control_grip = {
 				    true,
-				    add(solved[layout.gun].position, rotate(solved[layout.gun].rotation, contact)),
+				    transform_point(hands::pose_math::as_anchor(solved[layout.gun],layout.model_scale),contact),
 				    view_offset};
 				if (independent)
 					weapons::viewmodel_visibility::publish(
@@ -1883,7 +1964,7 @@ namespace vr::gameplay::hands
 				solver().safe_index_applied = false;
 				if (weapons::carry::active())
 				{
-					const auto gun = hands::pose_math::as_anchor(solved[layout.gun]);
+					const auto gun = hands::pose_math::as_anchor(solved[layout.gun], layout.model_scale);
 					std::array<anchor, 2> contacts;
 					// A left-held unprofiled gun leaves the right arm free. Its solved
 					// wrist is no longer the control grip! Capture the native rear-hand
@@ -1896,7 +1977,7 @@ namespace vr::gameplay::hands
 					contacts[0].position[1] = -contacts[0].position[1];
 					auto scene = weapons::carry::scene{
 					    owner,
-					    {add(gun.position, view_offset), gun.rotation},
+					    {add(gun.position, view_offset), gun.rotation, layout.model_scale},
 					    contacts,
 					    vr::hand::none,
 					    input.sequence,
@@ -1904,7 +1985,7 @@ namespace vr::gameplay::hands
 					    input.sampled_at,
 					    {},
 					    hands::pose_math::compose(hands::pose_math::inverse(gun),
-					                              hands::pose_math::as_anchor(solved[layout.muzzle])),
+					                              hands::pose_math::as_anchor(solved[layout.muzzle], layout.model_scale)),
 					    true,
 					    nullptr,
 					    independent};
@@ -1929,6 +2010,8 @@ namespace vr::gameplay::hands
 				}
 				finalize_arms();
 				commit_render_bones(solved, layout.count, object->matrices, lag);
+				sized_source.commit();
+				first_person_mesh_size::publish(object,object->matrices,object->timestamp,layout.model_scale);
 				probe.solved = true;
 				++applications;
 				++transition_poses;
@@ -2015,8 +2098,12 @@ namespace vr::gameplay::hands
 			                                 .posed_hands = entity_hands,
 			                                 .visible_hands = visible_hands});
 			reload_tokens = interaction_presentation.reload_item_tokens;
+			if (independent)
+				native_part_motion(*object, {solved.data(), size_t(layout.count)},layout.model_scale);
 			finalize_arms(visible_hands);
 			commit_render_bones(solved, layout.count, object->matrices, lag);
+			sized_source.commit();
+			first_person_mesh_size::publish(object,object->matrices,object->timestamp,layout.model_scale);
 			attachments::publish(
 			    {reinterpret_cast<std::uintptr_t>(object),
 			     reinterpret_cast<std::uintptr_t>(object->matrices),
@@ -2034,7 +2121,7 @@ namespace vr::gameplay::hands
 			      solver().binding.equipment_parts.library.mirror_basis[layout.arms[1].wrist]},
 			     knife_poses,
 			     storage_body,
-			     reload_tokens});
+			     reload_tokens,layout.model_scale});
 			// Only AFTER native bones have been committed. Rendering later matches
 			// the exact object/buffer/epoch AND consumed bone, not current_muzzle().
 			if (layout.muzzle >= 0)
@@ -2113,7 +2200,7 @@ namespace vr::gameplay::hands
 				     << '/' << input.trigger[1].down << " touch_input_sequence=" << input.sequence
 				     << " safe_index_blend=" << solver().safe_index_weight
 				     << " safe_index_applied=" << solver().safe_index_applied << '\n';
-				text << "contract=" << probe.contract << " muzzle_forward_dot=" << probe.muzzle_forward_dot
+				text << "model_scale=" << first_person_size::value() << " contract=" << probe.contract << " muzzle_forward_dot=" << probe.muzzle_forward_dot
 				     << " holding_hand=" << static_cast<int>(probe.owner.rear)
 				     << " weapon_token=" << probe.owner.weapon << " hold_revision=" << probe.owner.revision
 				     << " models=" << probe.model_count << " bones=" << probe.bone_count
@@ -2138,6 +2225,8 @@ namespace vr::gameplay::hands
 				     << probe.storage_body.position[2] << "] forward=[" << probe.storage_body.yaw_axis[0][0]
 				     << ',' << probe.storage_body.yaw_axis[0][1] << ',' << probe.storage_body.yaw_axis[0][2]
 				     << "]\n";
+				text << "native_part_motion frames=" << native_motion_frames << " peak=" << native_motion_peak
+				     << " auto_reload=" << weapons::physical_reload::native_reload() << '\n';
 				text << "grip_profile="
 				     << (solver().binding.active_profile ? solver().binding.active_profile->id : "none")
 				     << " ads_approach_m=" << solver().ads_approach_meters << " variant="
@@ -2179,7 +2268,7 @@ namespace vr::gameplay::hands
 				}
 			}
 			// No console or disk I/O while holding the pose/native skeleton locks.
-			text << weapons::viewmodel_visibility::status();
+			text << weapons::viewmodel_visibility::status() << first_person_mesh_size::status();
 			text << empty_native::status();
 			text << scripted_arms::status();
 			return text.str();

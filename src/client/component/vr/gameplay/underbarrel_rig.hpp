@@ -15,6 +15,7 @@ namespace vr::gameplay::weapons::underbarrel
 		std::span<const joint_pose> firing_fingers{authored::fire_fingers};
 		std::array<int,2> round_parts{-1,-1};std::array<hands::anchor,2> round_parts_local{};
 		int bolt{-1};hands::anchor bolt_rest{}; // Shotgun bolt is a sibling of the pump, not its child.
+		bool digital{};                         // Exact admitted M203 attachment material provider.
 		explicit operator bool()const noexcept{return type!=kind::none && root>=0 && round>=0;}
 	};
 	inline constexpr std::array<std::string_view,7> m203_bones{"tag_m203","j_grenade_m203","j_m203_button","j_slider_m203","j_trigger_m203","j_grenade_main","j_grenade_shell"};
@@ -22,6 +23,46 @@ namespace vr::gameplay::weapons::underbarrel
 	inline constexpr std::array<std::string_view,5> shotgun_bones{"tag_shotgun","j_ammo_shotgun","j_plate_shotgun","j_pump_shotgun","j_reload_shotgun"};
 	inline constexpr std::array<int,7> m203_parents{-1,0,0,0,0,1,1};
 	inline constexpr std::array<int,9> gp25_parents{-1,0,0,0,0,3,3,4,4};
+	// H1 has separate M4/M16 providers. The retained variant bit selects those
+	// providers here; it is not a request for an H2 digital-camouflage asset.
+	inline constexpr std::array<const char*, 2> m203_models{"attach_h1_launcher_m203_vm", "attach_h1_launcher_m203_m16_vm"};
+	inline constexpr hands::vec h1_m203_seated_round{1.8f, .059f, -1.262f};
+	enum class chamber_visual
+	{
+		empty,
+		live,
+		spent
+	};
+	inline chamber_visual visible_chamber(const state& ammo) noexcept
+	{
+		if (!valid(ammo) || ammo.id.type != kind::m203)
+			return chamber_visual::empty;
+		return ammo.chamber ? chamber_visual::live
+		       : ammo.spent ? chamber_visual::spent
+		                    : chamber_visual::empty;
+	}
+	inline bool case_unsupported(const state& ammo, float travel, float units, float clearance) noexcept
+	{
+		return valid(ammo) && ammo.id.type == kind::m203 && ammo.spent && !ammo.held &&
+		       std::isfinite(travel) && travel >= 0 && travel <= authored::m203_stroke &&
+		       std::isfinite(units) && units > 0 && units <= 10000 && std::isfinite(clearance) &&
+		       clearance > 0 && travel >= clearance / units;
+	}
+	inline hands::anchor chamber_pose(const part_rig& parts,
+	                                  chamber_visual content,
+	                                  float travel,
+	                                  float units) noexcept
+	{
+		auto result = parts.round_rest;
+		// A newly loaded round seats in the sliding tube. The extractor holds
+		// a fired case at the receiver until the opening transaction ejects it.
+		if (content == chamber_visual::live && std::isfinite(travel) && std::isfinite(units) && units > 0)
+			result.position =
+			    hands::add(result.position,
+			               hands::scale(hands::rotate(parts.mount.rotation, authored::m203_axis),
+			                            std::clamp(travel, 0.f, authored::m203_stroke) * units));
+		return result;
+	}
 	inline hands::anchor firing_anchor(const part_rig& p,const hands::rig& r,const hands::pose_library& library,
 		hands::anchor ordinary,int hand)noexcept
 	{
@@ -43,6 +84,7 @@ namespace vr::gameplay::weapons::underbarrel
 			if(parent<0 || parent>=m.begin || bones[parent].name!=tag || bones[m.begin].name!=tag ||
 				m.count!=(k==kind::m203?7:k==kind::gp25?9:5))return {};
 			out.type=k;out.root=m.begin;out.mount=compose(inverse(as_anchor(bones[r.gun].bind)),as_anchor(bones[parent].bind));
+			out.digital = m.name == m203_models[1];
 			const auto attachment=inverse(as_anchor(bones[m.begin].bind));
 			for(int i=m.begin;i<m.begin+m.count;++i)
 			{
@@ -93,6 +135,7 @@ namespace vr::gameplay::weapons::underbarrel
 				for(int b:{tag,slide,round})if(b>=0)for(float f:bones[b].bind.position)if(!std::isfinite(f)||std::abs(f)>10000)return {};
 				const auto gun=inverse(as_anchor(bones[r.gun].bind));
 				out.type=k;out.root=m.begin;out.motion=k==kind::m203?slide:-1;out.round=round;
+				out.digital=m16;
 				out.mount=compose(gun,as_anchor(bones[tag].bind));
 				if(k==kind::m203)out.motion_rest=compose(gun,as_anchor(bones[slide].bind));
 				out.round_rest=compose(gun,as_anchor(bones[round].bind));
@@ -103,7 +146,7 @@ namespace vr::gameplay::weapons::underbarrel
 				// The H1 tubes' bore is 1.26 in below tag_m203 (the launcher j_grenade
 				// and the GP25 body extents), where H2's authored points sat 1.3-1.5 in
 				// higher: a round aimed at the visible bore missed the 4.5 cm load radius.
-				if(k==kind::m203)out.round_rest.position=compose(out.mount,{{1.8f,.059f,-1.262f},{0,0,0,1}}).position;
+				if(k==kind::m203)out.round_rest.position=compose(out.mount,{h1_m203_seated_round,{0,0,0,1}}).position;
 				out.muzzle=k==kind::m203?compose(out.mount,authored::m203_muzzle):
 					compose(out.mount,{{10.841f,.059f,-1.262f},{0,0,0,1}}); // GP25 body front, on the bore.
 				const std::array<std::string_view,2> parts{"j_grenade_main","j_grenade_shell"};

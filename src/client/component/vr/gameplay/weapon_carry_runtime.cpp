@@ -1,5 +1,6 @@
 #include <std_include.hpp>
 #include "../debug_options.hpp"
+#include "../settings.hpp"
 #include "component/scene_model_record.hpp"
 #include "vehicles/runtime.hpp"
 #include "carry_interaction.hpp"
@@ -31,6 +32,7 @@
 #include "hands/attachment_pose.hpp"
 #include "weapon_carry_grip.hpp"
 #include "grip_edges.hpp"
+#include "holster_feedback.hpp"
 #include "weapon_carry_motion.hpp"
 #include "support_retention.hpp"
 #include "physical_reload_runtime.hpp"
@@ -106,6 +108,7 @@ namespace vr::gameplay::weapons::carry
 		std::array<std::atomic_uint64_t, 4> render_misses{}; // record, epoch/part, ownership, origin
 		hold presented{};
 		grip_edge_gate edges;
+		back_slot_feedback slot_feedback;
 		scripted_control::selection_pause script_pause;
 		identity preferred{};
 		std::uint32_t expected_selection{}, last_selection{};
@@ -162,6 +165,7 @@ namespace vr::gameplay::weapons::carry
 			interaction::suspend();
 			owned.clear();
 			edges = {};
+			slot_feedback.reset();
 			preferred = {};
 			last_sequence = 0;
 			motion_history.reset();
@@ -282,7 +286,7 @@ namespace vr::gameplay::weapons::carry
 						continue;
 				}
 				game::GfxScaledPlacement placement{};
-				placement.scale = 1;
+				placement.scale = world.scale;
 				std::copy(world.position.begin(), world.position.end(), placement.base.origin);
 				std::copy(world.rotation.begin(), world.rotation.end(), placement.base.quat);
 				// Legacy held fallback only; waist weapons own native skeletons.
@@ -349,7 +353,7 @@ namespace vr::gameplay::weapons::carry
 				                          wrists[h].position,
 				                          wrists[1 - h].position,
 				                          hands::sub(out.supports[1 - h].position, local.position));
-			out.gun = {hands::sub(position, hands::rotate(rotation, local.position)), rotation};
+			out.gun = {hands::sub(position, hands::rotate(rotation, hands::scale(local.position,out.gun.scale))), rotation, out.gun.scale};
 			out.support_available = true;
 			out.has_moving_control = false;
 			if (out.authored && out.authored->tube && out.authored->tube->lever)
@@ -441,7 +445,7 @@ namespace vr::gameplay::weapons::carry
 			if (r.action == outcome::rejected)
 			{
 				++rejections;
-				reason = "release rejected; regrip and release to retry";
+				reason = "carry interaction rejected; grip retained";
 				return;
 			}
 			++transitions;
@@ -766,7 +770,17 @@ namespace vr::gameplay::weapons::carry
 			const auto velocity = motion_history.update(input, hands, valid_hands, body.units_per_meter);
 			// Consume only after per-hand pose admission. A missing opposite hand
 			// must neither swallow this hand's release nor replay it on recovery.
-			const auto event = edges.consume(interaction_input, gameplay, now);
+			std::array<hold, 2> current_grips{};
+			unsigned toggle_mask{};
+			const auto* grip_mode = game::Dvar_FindVar(settings::weapon_grip_mode.name);
+			for (unsigned h = 0; h < 2; ++h)
+				if (const auto* gun = owned.in_hand(static_cast<hand>(h)))
+				{
+					current_grips[h] = gun->owner;
+					if (grip_mode && grip_mode->current.integer == 1 && !gun->policy.abdominal)
+						toggle_mask |= 1u << h;
+				}
+			const auto event = edges.consume(interaction_input, gameplay, now, current_grips, toggle_mask);
 			if (event.pressed || event.released || event.resumed || event.deferred != deferred_mask)
 			{
 				const unsigned down = (input.squeeze[0].down ? 1u : 0u) | (input.squeeze[1].down ? 2u : 0u);
@@ -886,6 +900,7 @@ namespace vr::gameplay::weapons::carry
 						++rejections;
 						reason = "mechanical release preparation rejected; grip retained";
 						record_release(outcome::rejected, reason);
+						edges.retry_release(v->owner, event.released);
 						continue;
 					}
 				}
@@ -957,6 +972,10 @@ namespace vr::gameplay::weapons::carry
 				        : native_carry::status();
 				record_release(r.action, detail.c_str());
 				complete(r, last);
+				if (r.action == outcome::rejected)
+					if (const auto* retained = owned.find(id);
+					    retained && edges.retry_release(retained->owner, event.released))
+						reason = "release pending; waiting for safe placement";
 			}
 			bool ordinary_released{};
 			for (const auto& v : owned.instances())
@@ -1033,6 +1052,7 @@ namespace vr::gameplay::weapons::carry
 			frame.body = body;
 			frame.wrists = wrists;
 			frame.valid_hands = valid_hands;
+			frame.blocked_acquisitions = event.consumed;
 			frame.objects = attachment_scenes;
 			frame.holsters = slots;
 			batch.frame = frame;
@@ -1097,6 +1117,7 @@ namespace vr::gameplay::weapons::carry
 		if (!scheduler::is_executing(scheduler::pipeline::server))
 			return nullptr;
 		tick();
+		if (!batch_ready) slot_feedback.reset();
 		return batch_ready ? &batch : nullptr;
 	}
 	void collect_interactions()
@@ -1373,6 +1394,39 @@ namespace vr::gameplay::weapons::carry
 		const auto& wrists = batch.frame.wrists;
 		const auto valid_hands = batch.frame.valid_hands;
 		const auto& layout = batch.layout;
+		const auto& slots = batch.frame.holsters;
+		unsigned near_hands{};
+		if (slots.valid)
+		{
+			auto area = slots.volumes[2];
+			area.radius += .04f * body.units_per_meter;
+			for (unsigned h = 0; h < 2; ++h)
+				if ((valid_hands & (1u << h)) && area.contains(batch.hand_positions[h])) near_hands |= 1u << h;
+		}
+		const auto operated = batch.edges.pressed | batch.edges.released | batch.edges.consumed;
+		const bool blocked = sequences::for_player(batch.player).block_carry;
+		const auto cues = slot_feedback.update(batch.frame.input, near_hands, operated, [&](hand actor)
+		{
+			const auto h = unsigned(actor);
+			if (blocked || !input.squeeze[h].active || (batch.edges.deferred & (1u << h))) return false;
+			const auto candidate = back_slot_candidate(owned, actor, slots, batch.hand_positions[h], !cheats::green_beret());
+			if (candidate.action == outcome::unchanged ||
+				!hand_interaction::permits(actor, hand_interaction::domain::carry, candidate.subject,
+					hand_interaction::recipe::single, hand_interaction::role::control)) return false;
+			if (candidate.action == outcome::drawn)
+				return !input.squeeze[h].down && draw_contact(owned, slots, wrists[h].position) == location::back;
+			const auto* held = owned.find(candidate.subject);
+			if(!held)return false;
+			const auto carried=pose(*held,wrists,input,valid_hands);
+			const auto model=native_carry::geometry(held->id.weapon);
+			const bool blade=carried.authored && carried.authored->melee;
+			if(carried.owner.id()!=held->id || !model.valid || (!blade && (!carried.has_muzzle || !model.has_muzzle)))return false;
+			const auto world=blade?carried.gun:hands::pose_math::compose(carried.gun,
+				hands::pose_math::compose(carried.muzzle,hands::pose_math::inverse(model.muzzle)));
+			return native_carry::clearance(held->id.weapon,world,body.head_position);
+		});
+		for (unsigned h = 0; h < 2; ++h)
+			if (cues & (1u << h)) feedback::carry_readiness(hand(h), input);
 		models_frame models;
 		models.at = input.sampled_at;
 		models.units = body.units_per_meter;
@@ -1683,6 +1737,10 @@ namespace vr::gameplay::weapons::carry
 	{
 		void post_unpack() override
 		{
+			static auto grip_modes = settings::weapon_grip_mode.values;
+			dvars::register_enum(settings::weapon_grip_mode.name, grip_modes.data(),
+				settings::weapon_grip_mode.default_index, game::DVAR_FLAG_SAVED,
+				"Hold Grip or press again to release a weapon; reload parts keep their controls");
 			enabled = dvars::register_bool("vr_physicalCarry",
 			                               true,
 			                               game::DVAR_FLAG_SAVED,
@@ -1718,7 +1776,9 @@ namespace vr::gameplay::weapons::carry
 					        std::ostringstream out;
 					        out << "active=" << active() << " selected=" << projection().weapon
 					            << " transitions=" << transitions << " rejections=" << rejections
-					            << " overflow_drops=" << overflow_drops << " invariant=" << owned.invariant() << " reason=" << reason
+					            << " overflow_drops=" << overflow_drops << " invariant=" << owned.invariant()
+					            << " grip_mode=" << (game::Dvar_FindVar(settings::weapon_grip_mode.name)->current.integer == 1 ? "toggle" : "hold")
+					            << " reason=" << reason
 					            << " native=" << native_carry::status() << '\n';
 					        out << drop_presentation::status();
 					        const auto clips = native_ammunition::instances();
@@ -1741,7 +1801,7 @@ namespace vr::gameplay::weapons::carry
 						        out << "grip_input seq=" << e.sequence << " valid_poses=" << e.poses
 						            << " down=" << e.down << " pressed=" << e.event.pressed
 						            << " released=" << e.event.released << " deferred=" << e.event.deferred
-						            << " resumed_held=" << e.event.resumed;
+						            << " resumed_held=" << e.event.resumed << " retried=" << e.event.retried;
 						        for (const auto& b : e.buttons)
 							        out << " button=" << b.generation << ':' << b.presses << ':'
 							            << b.releases;
