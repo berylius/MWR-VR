@@ -145,14 +145,17 @@ namespace vr::gameplay::melee::native
 		// Native melee sends a separate contact event before G_Damage. That
 		// event owns weapon-specific impact audio/FX; G_Damage alone never sends it.
 		// Use the physical contact, not the stock forward search/auto-lunge.
-		if (false && (bladed(kind) || kind==tool::shield)) // MWR: H2 event numbers not rebound.
+		if constexpr (false) // MWR: H2 event numbers not rebound.
 		{
-			const auto* ps=reinterpret_cast<const game::playerState_s*>(player->client);
-			if (ps && events::valid_weapon_hit(target->s.entityNum,player->s.entityNum,weapon))
+			if (bladed(kind) || kind==tool::shield)
 			{
-				auto* event=utils::hook::invoke<game::gentity_s*>(0x1405183e0,contact.point.data(),events::hit);
-				if (event && events::weapon_hit({reinterpret_cast<std::byte*>(event),sizeof(*event)},target->s.entityNum,player->s.entityNum,weapon,ps->pm_flags,bladed(kind)))
-				{if(kind==tool::shield)++shield_hit_events;else ++hit_events;}
+				const auto* ps=reinterpret_cast<const game::playerState_s*>(player->client);
+				if (ps && events::valid_weapon_hit(target->s.entityNum,player->s.entityNum,weapon))
+				{
+					auto* event=utils::hook::invoke<game::gentity_s*>(0x1405183e0,contact.point.data(),events::hit);
+					if (event && events::weapon_hit({reinterpret_cast<std::byte*>(event),sizeof(*event)},target->s.entityNum,player->s.entityNum,weapon,ps->pm_flags,bladed(kind)))
+					{if(kind==tool::shield)++shield_hit_events;else ++hit_events;}
+				}
 			}
 		}
 		// Same complete G_Damage ABI and MOD_MELEE=8 as 0x14051d4f7. Native
@@ -172,8 +175,11 @@ namespace vr::gameplay::melee::native
 		// Stock EV_MELEE_BLOOD reselects the current firearm and requires a
 		// tag_knife_fx on its flat viewmodel; sending it too duplicates USP hits.
 		// Shield retains its existing native event behavior.
-		if (false && kind==tool::shield && accepted>0 && player->client && read<void*>(target,0x120))
-		{utils::hook::invoke<void>(0x140515fa0,player,events::blood,0);++shield_blood_events;}
+		if constexpr (false) // MWR: H2 event numbers not rebound.
+		{
+			if (kind==tool::shield && accepted>0 && player->client && read<void*>(target,0x120))
+			{utils::hook::invoke<void>(0x140515fa0,player,events::blood,0);++shield_blood_events;}
+		}
 		return accepted;
 	}
 	feedback_counts feedback_status() noexcept {return {hit_events.load(),blood_events.load(),shield_hit_events.load(),shield_blood_events.load()};}
