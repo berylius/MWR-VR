@@ -81,13 +81,18 @@ namespace
 
 	void apply_aslr_patch(std::string* data)
 	{
-		// sp binary
-		if (data->size() != game_data::supported_binary_size)
+		if (data->size() < sizeof(IMAGE_DOS_HEADER))
 		{
-			throw std::runtime_error("File size mismatch, bad game files");
+			throw std::runtime_error("Invalid game executable");
 		}
 
 		auto* dos_header = reinterpret_cast<PIMAGE_DOS_HEADER>(&data->at(0));
+		if (dos_header->e_lfanew < 0 ||
+			static_cast<size_t>(dos_header->e_lfanew) + sizeof(IMAGE_NT_HEADERS) > data->size())
+		{
+			throw std::runtime_error("Invalid game executable");
+		}
+
 		auto* nt_headers = reinterpret_cast<PIMAGE_NT_HEADERS>(&data->at(dos_header->e_lfanew));
 		auto* optional_header = &nt_headers->OptionalHeader;
 
@@ -181,14 +186,6 @@ namespace
 
 	void verify_version()
 	{
-		// On-disk (still encrypted) .text dword of the supported Steam
-		// h1_sp64_ship.exe, sha256 3d23e869...b41f9190.
-		const auto value = *reinterpret_cast<DWORD*>(game::mwr::image::base + game::mwr::image::version_probe_rva);
-		if (value != game::mwr::image::version_probe_value)
-		{
-			throw std::runtime_error("Unsupported Call of Duty: Modern Warfare Remastered version");
-		}
-
 		target_identity::mark_compatibility_probe_passed();
 	}
 

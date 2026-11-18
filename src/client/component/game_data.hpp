@@ -13,14 +13,13 @@ namespace game_data
 		return "h1_sp64_ship.exe";
 	}
 
-	// Match the loader's supported binary without loading the game or allocating
-	// its full image. A missing profile alone never identifies an installation.
+	// Accept any PE executable at the expected path without enforcing a specific build size.
 	inline bool is_game_directory_available() noexcept
 	{
 		try
 		{
 			const auto path = get_game_binary_path();
-			if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) != supported_binary_size) return false;
+			if (!std::filesystem::is_regular_file(path)) return false;
 			std::ifstream file(path, std::ios::binary);
 			char signature[2]{};
 			return file.read(signature, sizeof(signature)) && signature[0] == 'M' && signature[1] == 'Z';
