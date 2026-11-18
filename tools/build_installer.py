@@ -1,11 +1,4 @@
-"""Package a Release build into a one-click installer.
-
-Usage: python tools/build_installer.py [Release]
-The installer also takes /silent (detected folder, no dialogs; exit code 0 on success).
-Output: build/dist/MWR-VR-Setup.exe (and the same files as a .zip for
-manual installs). Build the solution first (generate.bat, then the Release
-configuration); this only packages what the game folder needs.
-"""
+"""Package a built build into a one-click installer and manual install zip."""
 from __future__ import annotations
 
 import json
@@ -18,8 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = sys.argv[1] if len(sys.argv) > 1 else "Release"
 BIN = ROOT / "build/bin/x64" / CONFIG
 DIST = ROOT / "build/dist"
+EXE = "overlord-debug.exe" if CONFIG == "Debug" else "overlord.exe"
+MANIFEST = "overlord-debug.vrmanifest" if CONFIG == "Debug" else "overlord.vrmanifest"
 # The same set port/deploy.sh copies into the game folder (no .pdb/.lib).
-FILES = ["overlord.exe", "openxr_loader.dll", "overlord.vrmanifest"]
+FILES = [EXE, "openxr_loader.dll", MANIFEST]
 FOLDERS = ["steamvr", "vr_input", "overlord-mwr"]
 CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
 
